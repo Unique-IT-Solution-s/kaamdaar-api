@@ -3,6 +3,8 @@ import cors from "cors";
 import helmet from "helmet";
 import dotenv from "dotenv"
 import connectDb from "./src/config/db.js";
+import "dotenv/config";
+
 dotenv.config()
 
 import authRoutes from "./src/routes/authRoutes.js"

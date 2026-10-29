@@ -190,7 +190,7 @@ export const registerCustomer = async (req, res) => {
           sessionId: userSession._id.toString(),
         },
         accessSecret,
-        { expiresIn: "15m" },
+        { expiresIn: "2d" },
       );
 
       registeredUser = {
@@ -274,7 +274,7 @@ export const getCustomerProfile = async (req, res) => {
       });
     }
 
-    const profile = await CustomerProfile.findOne({ userId: customer.userId });
+    const profile = await CustomerProfile.findOne({ userId: customer._id });
 
     return sendSuccess(res, {
       statusCode: 200,
