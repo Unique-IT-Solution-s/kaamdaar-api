@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 
-const customerAddressSchema = new mongoose.Schema({
+const customerAddressSchema = new mongoose.Schema(
+  {
     customer_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "CustomerProfile",
@@ -45,7 +46,7 @@ const customerAddressSchema = new mongoose.Schema({
       type: String,
       trim: true,
       required: true,
-      maxlength: 20,
+      match: /^[1-9][0-9]{5}$/,
     },
 
     latitude: {
@@ -73,11 +74,18 @@ const customerAddressSchema = new mongoose.Schema({
       updatedAt: "updated_at",
     },
     collection: "customer_addresses",
-  }
-)
+  },
+);
 
 customerAddressSchema.index({ customer_id: 1, is_default: 1 });
 
-const CustomerAddress = mongoose.model("CustomerAddress", customerAddressSchema)
+// Ensure at most one default address per customer
+customerAddressSchema.index(
+  {customer_id : 1}, 
+  {unique : true, partialFilterExpression : {is_default : true}}, 
+  {name : "one_default_address_per_customer"}
+)
 
-export default CustomerAddress
+const CustomerAddress = mongoose.model("CustomerAddress", customerAddressSchema);
+
+export default CustomerAddress;
