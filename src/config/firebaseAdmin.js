@@ -1,11 +1,18 @@
 import "dotenv/config";
-import { initializeApp, applicationDefault } from "firebase-admin/app";
+import {
+  getApps,
+  initializeApp,
+  applicationDefault,
+} from "firebase-admin/app";
+
 import { getAuth } from "firebase-admin/auth";
 
-const firebaseApp = initializeApp({
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  credential: applicationDefault(),
-});
+
+const firebaseApp = getApps().length
+  ? getApps()[0]
+  : initializeApp({
+      credential: applicationDefault(),
+    });
 
 export const adminAuth = getAuth(firebaseApp);
 

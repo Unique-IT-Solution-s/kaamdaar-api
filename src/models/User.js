@@ -4,10 +4,10 @@ const userSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: true,
       trim: true,
       minlength: 2,
       maxlength: 100,
+      default: null,
     },
 
     mobile: {
@@ -20,12 +20,11 @@ const userSchema = new mongoose.Schema(
 
     email: {
       type: String,
-      required: true,
-      unique: true,
       lowercase: true,
       trim: true,
       maxlength: 254,
       match: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+      default: undefined,
     },
 
     role_id: {
@@ -55,17 +54,19 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    
+
     language: {
       type: String,
       default: "en",
     },
+
     firebase_uid: {
       type: String,
       unique: true,
       sparse: true,
       trim: true,
     },
+
     profile_image: {
       url: {
         type: String,
@@ -76,8 +77,25 @@ const userSchema = new mongoose.Schema(
         default: null,
       },
     },
+
+    profile_completed: {
+      type: Boolean,
+      default: false,
+    },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+  }
+);
+
+userSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $type: "string" },
+    },
+  }
 );
 
 const User = mongoose.model("User", userSchema);
