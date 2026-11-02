@@ -50,11 +50,6 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
 
-    is_active: {
-      type: Boolean,
-      default: true,
-    },
-
     language: {
       type: String,
       default: "en",
@@ -82,10 +77,31 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    last_login_at: {
+      type: Date,
+      default: null,
+    },
+    last_seen_at: {
+      type: Date,
+      default: null,
+    },
+    account_status: {
+      type: String,
+      enum: ["ACTIVE", "SUSPENDED", "DEACTIVATED"],
+      default: "ACTIVE",
+    },
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      unique: true,
+      sparse: true,
+      default: undefined,
+    },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 userSchema.index(
@@ -95,7 +111,7 @@ userSchema.index(
     partialFilterExpression: {
       email: { $type: "string" },
     },
-  }
+  },
 );
 
 const User = mongoose.model("User", userSchema);

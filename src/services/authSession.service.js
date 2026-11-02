@@ -52,6 +52,16 @@ const validateRefreshToken = (token) => {
   );
 };
 
+const validateUserAccount = (user) => {
+  if (!user?._id) {
+    throw new Error("Valid user is required.");
+  }
+
+  if (user.account_status !== "ACTIVE") {
+    throw new Error("User account is unavailable.");
+  }
+};
+
 // ==================================================
 // 1. CREATE USER SESSION
 // ==================================================
@@ -59,40 +69,32 @@ const validateRefreshToken = (token) => {
 export const createUserSession = async ({
   user,
   platform = "OTHER",
-  deviceId,
-  deviceName,
+  deviceId = null,
+  deviceName = null,
   mongoSession = null,
 }) => {
-  if (!user?._id) {
-    throw new Error(
-      "Valid user is required to create a session."
-    );
-  }
+  validateUserAccount(user);
 
   if (!ALLOWED_PLATFORMS.includes(platform)) {
     throw new Error("Invalid session platform.");
   }
 
-  if (user.is_active !== true) {
-    throw new Error(
-      "Inactive users cannot create sessions."
-    );
-  }
-
   const refreshToken = generateRefreshToken();
   const expiresAt = getRefreshTokenExpiry();
+  const now = new Date();
 
   const sessionData = {
     user_id: user._id,
     refresh_token_hash: hashToken(refreshToken),
-    device_id: deviceId || null,
-    device_name: deviceName || null,
+    device_id: deviceId,
+    device_name: deviceName,
     platform,
     expires_at: expiresAt,
-    last_used_at: new Date(),
+    last_used_at: now,
+    is_online: true,
+    last_active: now,
   };
 
-  // Use the supplied transaction when available.
   const createdSessions = await UserSession.create(
     [sessionData],
     mongoSession ? { session: mongoSession } : {}
@@ -100,18 +102,26 @@ export const createUserSession = async ({
 
   const session = createdSessions[0];
 
-  // Access token includes the session ID.
-  const accessToken = generateAccessToken(
-    user,
-    session._id
-  );
+  try {
+    const accessToken = generateAccessToken(
+      user,
+      session._id
+    );
 
-  return {
-    sessionId: session._id,
-    accessToken,
-    refreshToken,
-    expiresAt,
-  };
+    return {
+      sessionId: session._id,
+      accessToken,
+      refreshToken,
+      expiresAt,
+    };
+  } catch (error) {
+    // Remove session if access-token generation fails.
+    await UserSession.deleteOne({
+      _id: session._id,
+    });
+
+    throw error;
+  }
 };
 
 // ==================================================
@@ -124,31 +134,47 @@ export const rotateRefreshToken = async (refreshToken) => {
   }
 
   const oldHash = hashToken(refreshToken);
+  const now = new Date();
 
-  // Find active session.
+  // Find an active, unexpired session.
   const session = await UserSession.findOne({
     refresh_token_hash: oldHash,
     revoked_at: null,
-    expires_at: { $gt: new Date() },
+    expires_at: { $gt: now },
   });
 
   if (!session) {
     throw new Error("Invalid or expired session.");
   }
 
-  // Validate user.
+  // Validate user account using the actual User model.
   const user = await User.findOne({
     _id: session.user_id,
-    is_active: true,
+    account_status: "ACTIVE",
   });
 
   if (!user) {
+    // Revoke session if user is no longer active.
+    await UserSession.updateOne(
+      {
+        _id: session._id,
+        revoked_at: null,
+      },
+      {
+        $set: {
+          revoked_at: new Date(),
+          revoke_reason: "ACCOUNT_DISABLED",
+          is_online: false,
+        },
+      }
+    );
+
     throw new Error("User account is unavailable.");
   }
 
-  // Generate new refresh token.
   const newRefreshToken = generateRefreshToken();
   const newExpiresAt = getRefreshTokenExpiry();
+  const updatedAt = new Date();
 
   // Atomically replace the old refresh token.
   const updatedSession = await UserSession.findOneAndUpdate(
@@ -156,13 +182,15 @@ export const rotateRefreshToken = async (refreshToken) => {
       _id: session._id,
       refresh_token_hash: oldHash,
       revoked_at: null,
-      expires_at: { $gt: new Date() },
+      expires_at: { $gt: updatedAt },
     },
     {
       $set: {
         refresh_token_hash: hashToken(newRefreshToken),
         expires_at: newExpiresAt,
-        last_used_at: new Date(),
+        last_used_at: updatedAt,
+        last_active: updatedAt,
+        is_online: true,
         revoke_reason: null,
       },
     },
@@ -177,7 +205,6 @@ export const rotateRefreshToken = async (refreshToken) => {
     );
   }
 
-  // Generate access token for the same session.
   const accessToken = generateAccessToken(
     user,
     updatedSession._id
@@ -201,6 +228,7 @@ export const revokeUserSession = async (refreshToken) => {
   }
 
   const tokenHash = hashToken(refreshToken);
+  const now = new Date();
 
   const revokedSession = await UserSession.findOneAndUpdate(
     {
@@ -209,8 +237,10 @@ export const revokeUserSession = async (refreshToken) => {
     },
     {
       $set: {
-        revoked_at: new Date(),
+        revoked_at: now,
         revoke_reason: "LOGOUT",
+        is_online: false,
+        last_active: now,
       },
     },
     {
@@ -236,6 +266,8 @@ export const revokeAllUserSessions = async (userId) => {
     throw new Error("User ID is required.");
   }
 
+  const now = new Date();
+
   return UserSession.updateMany(
     {
       user_id: userId,
@@ -243,8 +275,10 @@ export const revokeAllUserSessions = async (userId) => {
     },
     {
       $set: {
-        revoked_at: new Date(),
+        revoked_at: now,
         revoke_reason: "LOGOUT_ALL",
+        is_online: false,
+        last_active: now,
       },
     }
   );

@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 
-const userSessionSchema = new mongoose.Schema({
+const userSessionSchema = new mongoose.Schema(
+  {
     user_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -58,6 +59,16 @@ const userSessionSchema = new mongoose.Schema({
       ],
       default: null,
     },
+    
+    is_online: {
+      type: Boolean,
+      default: false,
+    },
+
+    last_active: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: {
@@ -65,8 +76,8 @@ const userSessionSchema = new mongoose.Schema({
       updatedAt: "updated_at",
     },
     collection: "user_sessions",
-  }
-)
+  },
+);
 
 userSessionSchema.index({ user_id: 1, revoked_at: 1 });
 userSessionSchema.index({ expires_at: 1 });

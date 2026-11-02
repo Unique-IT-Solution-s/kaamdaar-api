@@ -1,27 +1,17 @@
 import mongoose from "mongoose";
-import crypto from "node:crypto";
 import axios from "axios";
+import "dotenv/config";
 
-import FcmToken from "../models/FcmToken.js";
-
-import {
-  sendFirebaseOtp,
-  verifyFirebaseOtp,
-} from "../services/firebaseOtp.services.js";
-
-import OtpChallenge from "../models/OtpChallenge.js";
 import User from "../models/User.js";
+import Role from "../models/Role.js";
 import CustomerProfile from "../models/CustomerProfile.js";
 import UserSession from "../models/UserSession.js";
+import CustomerAddress from "../models/CustomerAddress.js";
 
 import { adminAuth } from "../config/firebaseAdmin.js";
-import { getRoleByName } from "../services/role.service.js";
 
-import {
-  createUserSession,
-  revokeUserSession,
-  rotateRefreshToken,
-} from "../services/authSession.service.js";
+import { createUserSession, rotateRefreshToken } from "../services/authSession.service.js";
+
 
 // ==================================================
 // CONSTANTS
@@ -50,9 +40,6 @@ const getUserId = (req) =>
   req.user?.id ||
   req.user?._id?.toString() ||
   req.user?.user?._id?.toString();
-
-const getRefreshTokenFromRequest = (req) =>
-  req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE_NAME];
 
 const isValidObjectId = (id) =>
   typeof id === "string" && mongoose.isValidObjectId(id);
@@ -198,7 +185,7 @@ export const requestOtpController = async (req, res) => {
     if (!phoneRegex.test(phone)) {
       return res.status(422).json({
         status: false,
-        message: "Please provide a valid 10-digit Indian mobile number.",
+        message: "Please provide a valid 10-digit Indian mobile number only.",
       });
     }
 
@@ -225,6 +212,8 @@ export const requestOtpController = async (req, res) => {
         timeout: 15000,
       },
     );
+
+    console.log("response of firebse", response);
 
     // 6. Return successful response
     return res.status(200).json({
@@ -622,11 +611,6 @@ export const requestOtpController = async (req, res) => {
 //   }
 // };
 
-// Import your existing session and response helpers.
-// import { createUserSession } from "../utils/session.js";
-// import { sendErrorResponse } from "../utils/apiResponse.js";
-// import { sendWelcomeCandidate } from "../services/mailService.js";
-
 export const verifyOtpController = async (req, res) => {
   try {
     // ------------------------------------------------
@@ -637,11 +621,14 @@ export const verifyOtpController = async (req, res) => {
       .trim()
       .replace(/\D/g, "");
 
-      console.log("phone", phone)
+    console.log("phone", phone);
 
     // Normalize Indian country code.
     if (phone.length === 12 && phone.startsWith("91")) {
       phone = phone.slice(2);
+    }
+    if (phone.length === 11 && phone.startsWith("0")) {
+      phone = phone.slice(1);
     }
 
     const { sessionInfo, code } = req.body;
@@ -651,16 +638,11 @@ export const verifyOtpController = async (req, res) => {
     if (!phone) {
       errors.phone = "Mobile number is required.";
     } else if (!/^[6-9]\d{9}$/.test(phone)) {
-      errors.phone =
-        "Please provide a valid 10-digit Indian mobile number.";
+      errors.phone = "Please provide a valid 10-digit Indian mobile number.";
     }
 
-    if (
-      typeof sessionInfo !== "string" ||
-      !sessionInfo.trim()
-    ) {
-      errors.sessionInfo =
-        "Session information is required.";
+    if (typeof sessionInfo !== "string" || !sessionInfo.trim()) {
+      errors.sessionInfo = "Session information is required.";
     }
 
     if (!/^\d{6}$/.test(String(code ?? ""))) {
@@ -684,8 +666,7 @@ export const verifyOtpController = async (req, res) => {
     if (!apiKey) {
       return res.status(500).json({
         status: false,
-        message:
-          "Firebase API key configuration is missing.",
+        message: "Firebase API key configuration is missing.",
       });
     }
 
@@ -704,26 +685,23 @@ export const verifyOtpController = async (req, res) => {
         },
         {
           timeout: 15000,
-        }
+        },
       );
 
       firebaseResult = response.data;
-
+      console.log("firebaseResult", firebaseResult);
     } catch (firebaseError) {
-      const firebaseErrorMessage =
-        firebaseError.response?.data?.error?.message;
+      const firebaseErrorMessage = firebaseError.response?.data?.error?.message;
 
       console.error(
         "Firebase OTP Verification Error:",
-        firebaseErrorMessage || firebaseError.message
+        firebaseErrorMessage || firebaseError.message,
       );
 
       return res.status(400).json({
         status: false,
         message: "OTP Verification Failed",
-        error:
-          firebaseErrorMessage ||
-          "Invalid or expired OTP.",
+        error: firebaseErrorMessage || "Invalid or expired OTP.",
       });
     }
 
@@ -733,19 +711,30 @@ export const verifyOtpController = async (req, res) => {
 
     const firebasePhone = firebaseResult.phoneNumber;
     const formattedPhone = `+91${phone}`;
+    console.log("formatted phone", formattedPhone);
 
     if (firebasePhone !== formattedPhone) {
       return res.status(400).json({
         status: false,
-        message:
-          "Phone number mismatch with Firebase verification.",
+        message: "Phone number mismatch with Firebase verification.",
+      });
+    }
+
+    if (
+      !firebaseResult?.idToken ||
+      !firebaseResult?.localId ||
+      !firebaseResult?.phoneNumber
+    ) {
+      return res.status(401).json({
+        status: false,
+        message: "Firebase authentication failed.",
       });
     }
 
     // Verify Firebase identity token.
-    const decodedToken = await adminAuth.verifyIdToken(
-      firebaseResult.idToken
-    );
+    const decodedToken = await adminAuth.verifyIdToken(firebaseResult.idToken);
+
+    console.log("decoded token", decodedToken);
 
     if (
       !decodedToken.uid ||
@@ -758,173 +747,267 @@ export const verifyOtpController = async (req, res) => {
       });
     }
 
+    // 5. FIND OR CREATE USER
     // ------------------------------------------------
-    // 5. FETCH OR CREATE USER
-    // ------------------------------------------------
 
-    // let user = await User.findOne({
-    //   phone,
-    // });
+    const firebaseUid = decodedToken.uid;
 
-    // let isNewUser = false;
-
-    // if (!user) {
-    //   user = await User.create({
-    //     phone,
-
-    //     username: `user_${phone}`,
-
-    //     firebase_uid: decodedToken.uid,
-
-    //     is_profile_complete: false,
-
-    //     app_is_online: true,
-    //     app_last_active: new Date(),
-
-    //     is_online: true,
-    //     last_active: new Date(),
-    //   });
-
-    //   isNewUser = true;
-
-    // } else {
-    //   // Prevent linking a different Firebase identity.
-    //   if (
-    //     user.firebase_uid &&
-    //     user.firebase_uid !== decodedToken.uid
-    //   ) {
-    //     return res.status(409).json({
-    //       status: false,
-    //       message:
-    //         "Firebase account does not match this user.",
-    //     });
-    //   }
-
-    //   user.firebase_uid = decodedToken.uid;
-
-    //   user.app_is_online = true;
-    //   user.app_last_active = new Date();
-
-    //   user.is_online = true;
-    //   user.last_active = new Date();
-
-    //   await user.save();
-    // }
-
-    // // ------------------------------------------------
-    // // 6. REGISTER OR UPDATE FCM TOKEN
-    // // ------------------------------------------------
-
-    // const fcmToken =
-    //   req.body.fcm_token ||
-    //   req.body.fcmToken;
-
-    // const deviceId =
-    //   req.body.device_id ||
-    //   req.body.deviceId ||
-    //   "app_device";
-
-    // if (fcmToken) {
-    //   try {
-    //     await FcmToken.findOneAndUpdate(
-    //       {
-    //         user_id: user._id,
-    //         guard: "api",
-    //         device_id: deviceId,
-    //       },
-    //       {
-    //         $set: {
-    //           token: fcmToken,
-    //           deleted_at: null,
-    //         },
-    //       },
-    //       {
-    //         upsert: true,
-    //         new: true,
-    //         setDefaultsOnInsert: true,
-    //       }
-    //     );
-
-    //   } catch (fcmError) {
-    //     console.warn(
-    //       "FCM Token save failed during verifyOtp:",
-    //       fcmError.message
-    //     );
-    //   }
-    // }
-
-    // // ------------------------------------------------
-    // // 7. GENERATE AUTHENTICATION TOKEN
-    // // ------------------------------------------------
-
-    // // Node.js equivalent of Laravel Sanctum token.
-    // const sessionData = await createUserSession({
-    //   user,
-    //   platform: "NATIVE",
-    //   deviceId,
-    //   deviceName: req.body.deviceName || "Mobile App",
-    // });
-
-    // const token = sessionData.accessToken;
-
-    // // ------------------------------------------------
-    // // 8. LOAD CANDIDATE RELATIONS
-    // // ------------------------------------------------
-
-    // user = await User.findById(user._id).populate([
-    //   { path: "educations" },
-    //   { path: "experiences" },
-    //   { path: "resumes" },
-    //   { path: "certificates" },
-    // ]);
-
-    // // ------------------------------------------------
-    // // 9. SEND WELCOME EMAIL
-    // // ------------------------------------------------
-
-    // if (
-    //   user.email &&
-    //   user.is_profile_complete
-    // ) {
-    //   try {
-    //     await sendWelcomeCandidate(user);
-
-    //   } catch (mailError) {
-    //     console.warn(
-    //       "Welcome email failed:",
-    //       mailError.message
-    //     );
-    //   }
-    // }
-
-    // // ------------------------------------------------
-    // // 10. SUCCESS RESPONSE
-    // // ------------------------------------------------
-
-    return res.status(200).json({
-      status: true,
-      decodedToken
-
-      // message: isNewUser
-      //   ? "User registered and logged in successfully"
-      //   : "Login successful",
-
-      // is_new_user: isNewUser,
-
-      // is_profile_complete: Boolean(
-      //   user.is_profile_complete
-      // ),
-
-      // token,
-
-      // user,
+    let user = await User.findOne({
+      mobile: formattedPhone,
     });
 
+    let customerProfile = null;
+    let isNewUser = false;
+
+    // ------------------------------------------------
+    // 6. CHECK FIREBASE UID ALREADY LINKED
+    // ------------------------------------------------
+
+    const firebaseUidUser = await User.findOne({
+      firebase_uid: firebaseUid,
+    });
+
+    if (firebaseUidUser && firebaseUidUser.mobile !== formattedPhone) {
+      return res.status(409).json({
+        status: false,
+        message: "Firebase account is already linked to another user.",
+      });
+    }
+
+    // ------------------------------------------------
+    // 7. EXISTING USER LOGIN
+    // ------------------------------------------------
+
+    if (user) {
+      // Only customer login is allowed through this endpoint.
+      if (user.user_type !== "CUSTOMER") {
+        return res.status(403).json({
+          status: false,
+          message: "This account cannot log in as a customer.",
+        });
+      }
+
+      // Check user account status.
+      if (user.account_status !== "ACTIVE") {
+        return res.status(403).json({
+          status: false,
+          message: "Your account is unavailable. Please contact support.",
+        });
+      }
+
+      // Check existing Firebase UID.
+      if (user.firebase_uid && user.firebase_uid !== firebaseUid) {
+        return res.status(409).json({
+          status: false,
+          message: "This mobile number is linked to another Firebase account.",
+        });
+      }
+
+      // Find customer profile.
+      customerProfile = await CustomerProfile.findOne({
+        userId: user._id,
+      });
+
+      // Create missing profile if necessary.
+      if (!customerProfile) {
+        customerProfile = await CustomerProfile.findOneAndUpdate(
+          { userId: user._id },
+          {
+            $setOnInsert: {
+              userId: user._id,
+            },
+          },
+          {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true,
+          },
+        );
+      }
+
+      // Check customer-specific blocking.
+      if (customerProfile.isBlocked) {
+        return res.status(403).json({
+          status: false,
+          message: "Your customer account is blocked.",
+        });
+      }
+
+      // Link Firebase UID if not already linked.
+      if (!user.firebase_uid) {
+        user.firebase_uid = firebaseUid;
+      }
+
+      user.mobile_verified = true;
+      user.last_login_at = new Date();
+
+      await user.save();
+    }
+
+    // ------------------------------------------------
+    // 8. NEW CUSTOMER REGISTRATION
+    // ------------------------------------------------
+    else {
+      // Firebase UID should not already belong to another user.
+      if (firebaseUidUser) {
+        return res.status(409).json({
+          status: false,
+          message: "Firebase account is already registered.",
+        });
+      }
+
+      // Find CUSTOMER role.
+      const customerRole = await Role.findOne({
+        role_name: "CUSTOMER",
+      });
+
+      if (!customerRole) {
+        return res.status(500).json({
+          status: false,
+          message: "Customer role is not configured.",
+        });
+      }
+
+      // User and CustomerProfile must be created together.
+      const mongoSession = await mongoose.startSession();
+
+      try {
+        await mongoSession.withTransaction(async () => {
+          const createdUsers = await User.create(
+            [
+              {
+                mobile: formattedPhone,
+                firebase_uid: firebaseUid,
+                role_id: customerRole._id,
+                user_type: "CUSTOMER",
+                mobile_verified: true,
+                account_status: "ACTIVE",
+                profile_completed: false,
+                last_login_at: new Date(),
+              },
+            ],
+            {
+              session: mongoSession,
+            },
+          );
+
+          user = createdUsers[0];
+
+          const createdProfiles = await CustomerProfile.create(
+            [
+              {
+                userId: user._id,
+                isBlocked: false,
+              },
+            ],
+            {
+              session: mongoSession,
+            },
+          );
+
+          customerProfile = createdProfiles[0];
+        });
+
+        isNewUser = true;
+      } finally {
+        await mongoSession.endSession();
+      }
+    }
+
+    // ------------------------------------------------
+    // 9. CREATE USER SESSION
+    // ------------------------------------------------
+
+    const deviceId = req.body.device_id || req.body.deviceId || null;
+
+    const deviceName = req.body.deviceName || "Web Browser";
+
+    const sessionData = await createUserSession({
+      user,
+      platform: "WEB",
+      deviceId,
+      deviceName,
+    });
+
+    // ------------------------------------------------
+    // 10. FETCH CUSTOMER ADDRESSES
+    // ------------------------------------------------
+
+    const addresses = await CustomerAddress.find({
+      customer_id: customerProfile._id,
+    })
+      .populate("city_id")
+      .sort({
+        is_default: -1,
+        created_at: -1,
+      })
+      .lean();
+
+    const defaultAddress =
+      addresses.find((address) => address.is_default) || null;
+
+    // ------------------------------------------------
+    // 11. SET REFRESH TOKEN COOKIE
+    // ------------------------------------------------
+
+    res.cookie("kaamdaar_refresh_token", sessionData.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/api/v1/auth",
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
+    // ------------------------------------------------
+    // 12. SUCCESS RESPONSE
+    // ------------------------------------------------
+
+    return res.status(isNewUser ? 201 : 200).json({
+      status: true,
+
+      message: isNewUser
+        ? "Customer registered and verified successfully."
+        : "Login successful.",
+
+      data: {
+        isNewUser,
+
+        next_step: user.profile_completed ? "HOME" : "PROFILE_REQUIRED",
+
+        user: {
+          id: user._id,
+          name: user.name,
+          mobile: user.mobile,
+          email: user.email,
+          role: user.user_type,
+          profile_image: user.profile_image,
+          profile_completed: user.profile_completed,
+          mobile_verified: user.mobile_verified,
+        },
+
+        customerProfile: {
+          totalBookings: customerProfile.totalBookings,
+          totalSpent: customerProfile.totalSpent,
+          loyaltyPoints: customerProfile.loyaltyPoints,
+          dateOfBirth: customerProfile.dateOfBirth,
+          gender: customerProfile.gender,
+          preferences: customerProfile.preferences,
+          isBlocked: customerProfile.isBlocked,
+        },
+
+        addresses,
+        defaultAddress,
+
+        accessToken: sessionData.accessToken,
+
+        session: {
+          sessionId: sessionData.sessionId,
+          expiresAt: sessionData.expiresAt,
+        },
+      },
+    });
   } catch (error) {
-    console.error(
-      "Verify OTP Server Error:",
-      error.message
-    );
+    console.error("Verify OTP Server Error:", error.message);
 
     return res.status(500).json({
       status: false,
@@ -940,48 +1023,97 @@ export const verifyOtpController = async (req, res) => {
 
 export const refreshTokenController = async (req, res) => {
   try {
-    const refreshToken = getRefreshTokenFromRequest(req);
+    // 1. Validate platform before rotating tokens
+    const platform = req.body?.platform;
 
-    if (typeof refreshToken !== "string" || !refreshToken.trim()) {
+    const allowedPlatforms = ["WEB", "ANDROID", "IOS", "OTHER"];
+
+    if (!allowedPlatforms.includes(platform)) {
       return sendErrorResponse(
         res,
         400,
-        "Refresh token is required.",
+        "Invalid platform.",
+        "INVALID_PLATFORM",
+      );
+    }
+
+    // 2. Extract refresh token
+    const getRefreshTokenFromRequest = (req) =>
+      req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE_NAME];
+
+    const refreshToken = getRefreshTokenFromRequest(req);
+
+    if (
+      typeof refreshToken !== "string" ||
+      !refreshToken.trim()
+    ) {
+      return sendErrorResponse( res, 401,
+        "Refresh token is missing. Please log in again.",
         "REFRESH_TOKEN_REQUIRED",
       );
     }
 
-    const tokens = await rotateRefreshToken(refreshToken.trim());
+    // 3. Rotate refresh token and generate new access token
+    const tokens = await rotateRefreshToken(
+      refreshToken.trim()
+    );
 
-    const platform = req.body?.platform;
-
+    // 4. WEB: store refresh token in HttpOnly cookie
     if (platform === "WEB") {
-      setRefreshCookie(res, tokens.refreshToken, tokens.expiresAt);
+      setRefreshCookie(
+        res,
+        tokens.refreshToken,
+        tokens.expiresAt
+      );
     }
 
+    // 5. Return response
     return res.status(200).json({
       success: true,
       message: "Token refreshed successfully.",
       data: {
         accessToken: tokens.accessToken,
 
-        ...(platform !== "WEB" ? { refreshToken: tokens.refreshToken } : {}),
+        ...(platform !== "WEB"
+          ? { refreshToken: tokens.refreshToken }
+          : {}),
 
         expiresIn: 900,
         refreshExpiresAt: tokens.expiresAt,
       },
     });
   } catch (error) {
-    console.error("Refresh token error:", error.message);
+    // 6. Handle authentication-related errors
+    const authenticationErrors = [
+      "Invalid refresh token.",
+      "Invalid or expired session.",
+      "User account is unavailable.",
+      "Refresh token has already been used or revoked.",
+    ];
+
+    if (authenticationErrors.includes(error.message)) {
+      console.warn("Refresh authentication failed.");
+
+      return sendErrorResponse(
+        res,
+        401,
+        "Session expired. Please log in again.",
+        "REFRESH_FAILED",
+      );
+    }
+
+    // 7. Unexpected server error
+    console.error("Refresh token internal error:", error);
 
     return sendErrorResponse(
       res,
-      401,
-      "Unable to refresh session. Please log in again.",
-      "REFRESH_FAILED",
+      500,
+      "Unable to refresh session. Please try again.",
+      "INTERNAL_SERVER_ERROR",
     );
   }
 };
+
 
 // ==================================================
 // 4. LOGOUT

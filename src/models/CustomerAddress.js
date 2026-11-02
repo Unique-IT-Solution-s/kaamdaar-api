@@ -6,7 +6,6 @@ const customerAddressSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "CustomerProfile",
       required: true,
-      index: true,
     },
 
     label: {
@@ -77,7 +76,7 @@ const customerAddressSchema = new mongoose.Schema(
   },
 );
 
-customerAddressSchema.index({ customer_id: 1, is_default: 1 });
+
 
 // Ensure at most one default address per customer
 customerAddressSchema.index(
