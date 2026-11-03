@@ -1,6 +1,6 @@
 import express from "express";
 
-import {getMeController, logoutAllController, logoutController, refreshTokenController, requestOtpController, verifyOtpController} from "../controllers/authController.js"
+import {getMeController, logoutAllController, logoutController, refreshTokenController, requestOtpController, updateProfileController, verifyOtpController} from "../controllers/authController.js"
 import { authenticateUser } from "../middleware/authmiddleware.js";
 
 
@@ -31,5 +31,8 @@ router.post("/logout-all", authenticateUser, logoutAllController);
 
 // Get logged-in user
 router.get("/me", authenticateUser, getMeController);
+
+//update user profile 
+router.patch("/updateProfileController", authenticateUser, updateProfileController)
 
 export default router;

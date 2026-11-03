@@ -39,6 +39,7 @@ export const authenticateUser = async (req, res, next) => {
     // ----------------------------------------------
 
     const decoded = verifyAccessToken(token);
+    // console.log("decoded", decoded);
 
     if (
       !decoded.userId ||
@@ -79,7 +80,7 @@ export const authenticateUser = async (req, res, next) => {
 
     const user = await User.findOne({
       _id: decoded.userId,
-      is_active: true,
+      account_status: "ACTIVE",
     }).select("-__v");
 
     if (!user) {

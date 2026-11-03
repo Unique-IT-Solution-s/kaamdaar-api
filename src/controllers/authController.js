@@ -10,8 +10,10 @@ import CustomerAddress from "../models/CustomerAddress.js";
 
 import { adminAuth } from "../config/firebaseAdmin.js";
 
-import { createUserSession, rotateRefreshToken } from "../services/authSession.service.js";
-
+import {
+  createUserSession,
+  rotateRefreshToken,
+} from "../services/authSession.service.js";
 
 // ==================================================
 // CONSTANTS
@@ -213,7 +215,7 @@ export const requestOtpController = async (req, res) => {
       },
     );
 
-    console.log("response of firebse", response);
+    // console.log("response of firebse", response);
 
     // 6. Return successful response
     return res.status(200).json({
@@ -689,7 +691,7 @@ export const verifyOtpController = async (req, res) => {
       );
 
       firebaseResult = response.data;
-      console.log("firebaseResult", firebaseResult);
+      // console.log("firebaseResult", firebaseResult);
     } catch (firebaseError) {
       const firebaseErrorMessage = firebaseError.response?.data?.error?.message;
 
@@ -711,7 +713,7 @@ export const verifyOtpController = async (req, res) => {
 
     const firebasePhone = firebaseResult.phoneNumber;
     const formattedPhone = `+91${phone}`;
-    console.log("formatted phone", formattedPhone);
+    // console.log("formatted phone", formattedPhone);
 
     if (firebasePhone !== formattedPhone) {
       return res.status(400).json({
@@ -734,7 +736,7 @@ export const verifyOtpController = async (req, res) => {
     // Verify Firebase identity token.
     const decodedToken = await adminAuth.verifyIdToken(firebaseResult.idToken);
 
-    console.log("decoded token", decodedToken);
+    // console.log("decoded token", decodedToken);
 
     if (
       !decodedToken.uid ||
@@ -946,6 +948,8 @@ export const verifyOtpController = async (req, res) => {
     const defaultAddress =
       addresses.find((address) => address.is_default) || null;
 
+    const nextStep = isNewUser ? "PROFILE_REQUIRED" : "HOME";
+
     // ------------------------------------------------
     // 11. SET REFRESH TOKEN COOKIE
     // ------------------------------------------------
@@ -972,7 +976,7 @@ export const verifyOtpController = async (req, res) => {
       data: {
         isNewUser,
 
-        next_step: user.profile_completed ? "HOME" : "PROFILE_REQUIRED",
+        next_step: nextStep,
 
         user: {
           id: user._id,
@@ -1043,28 +1047,21 @@ export const refreshTokenController = async (req, res) => {
 
     const refreshToken = getRefreshTokenFromRequest(req);
 
-    if (
-      typeof refreshToken !== "string" ||
-      !refreshToken.trim()
-    ) {
-      return sendErrorResponse( res, 401,
+    if (typeof refreshToken !== "string" || !refreshToken.trim()) {
+      return sendErrorResponse(
+        res,
+        401,
         "Refresh token is missing. Please log in again.",
         "REFRESH_TOKEN_REQUIRED",
       );
     }
 
     // 3. Rotate refresh token and generate new access token
-    const tokens = await rotateRefreshToken(
-      refreshToken.trim()
-    );
+    const tokens = await rotateRefreshToken(refreshToken.trim());
 
     // 4. WEB: store refresh token in HttpOnly cookie
     if (platform === "WEB") {
-      setRefreshCookie(
-        res,
-        tokens.refreshToken,
-        tokens.expiresAt
-      );
+      setRefreshCookie(res, tokens.refreshToken, tokens.expiresAt);
     }
 
     // 5. Return response
@@ -1074,9 +1071,7 @@ export const refreshTokenController = async (req, res) => {
       data: {
         accessToken: tokens.accessToken,
 
-        ...(platform !== "WEB"
-          ? { refreshToken: tokens.refreshToken }
-          : {}),
+        ...(platform !== "WEB" ? { refreshToken: tokens.refreshToken } : {}),
 
         expiresIn: 900,
         refreshExpiresAt: tokens.expiresAt,
@@ -1113,7 +1108,6 @@ export const refreshTokenController = async (req, res) => {
     );
   }
 };
-
 
 // ==================================================
 // 4. LOGOUT
@@ -1258,6 +1252,144 @@ export const getMeController = async (req, res) => {
       500,
       "Unable to fetch authenticated user.",
       "GET_ME_FAILED",
+    );
+  }
+};
+
+export const updateProfileController = async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!isValidObjectId(userId))
+      return sendErrorResponse(
+        res,
+        401,
+        "Authentication required.",
+        "INVALID_AUTHENTICATION",
+      );
+
+    const { firstName, lastName, email } = req.body;
+    if (!firstName || !lastName) {
+      return sendErrorResponse(res, 401, "Enter firstname and lastname");
+    }
+    if (typeof firstName !== "string" || typeof lastName !== "string") {
+      return sendErrorResponse(
+        es,
+        422,
+        "First name and last name are required.",
+        "NAME_REQUIRED",
+      );
+    }
+    const trimedFirstName = firstName.trim();
+    const trimedLastName = lastName.trim();
+
+    if (trimedFirstName.length < 2 || trimedLastName.length < 2) {
+      return sendErrorResponse(
+        res,
+        422,
+        "First name and last name must contain at least 2 characters.",
+        "INVALID_NAME",
+      );
+    }
+
+    if (trimedFirstName.length > 50 || trimedLastName.length > 50) {
+      return sendErrorResponse(
+        res,
+        422,
+        "First name and last name cannot exceed 50 characters.",
+        "NAME_TOO_LONG",
+      );
+    }
+
+    // validate optinal email
+    let normalizedEmail;
+    if (email !== undefined || email !== null) {
+      if (typeof email !== "string") {
+        return sendErrorResponse(
+          res,
+          422,
+          "Invalid email address.",
+          "INVALID_EMAIL",
+        );
+      }
+    }
+
+    normalizedEmail = email.trim().toLowerCase();
+
+    if (
+      normalizedEmail &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+    ) {
+      return sendErrorResponse(
+        res,
+        422,
+        "Please provide a valid email address.",
+        "INVALID_EMAIL",
+      );
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return sendErrorResponse(res, 404, "User not found.", "USER_NOT_FOUND");
+    }
+
+    // 5. Only customers can update through this endpoint
+    if (user.user_type !== "CUSTOMER") {
+      return sendErrorResponse(
+        res,
+        403,
+        "This endpoint is only available for customers.",
+        "NOT_CUSTOMER",
+      );
+    }
+
+    //update profile fields
+    user.name = `${firstName}${lastName}`;
+
+    if (normalizedEmail !== undefined) {
+      if (normalizedEmail) {
+        user.email = normalizedEmail;
+      } else {
+        user.email = undefined;
+      }
+    }
+
+    //update profile completed
+    user.profile_completed = true;
+
+    await user.save();
+
+    // 8. Return updated profile
+    return res.status(200).json({
+      status: true,
+      message: "Profile updated successfully.",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          mobile: user.mobile,
+          email: user.email || null,
+          role: user.user_type,
+          profile_image: user.profile_image,
+          profile_completed: user.profile_completed,
+        },
+      },
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return sendErrorResponse(
+        res,
+        409,
+        "This email address is already registered.",
+        "EMAIL_ALREADY_EXISTS",
+      );
+    }
+
+    console.error("update profile error:", error.message);
+    return sendErrorResponse(
+      res,
+      500,
+      "Unable to update authenticated user.",
+      "PROFILE_UPDATE_FAILED",
     );
   }
 };
