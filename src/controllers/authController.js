@@ -24,7 +24,7 @@ const MAX_OTP_ATTEMPTS = 5;
 
 const ALLOWED_PLATFORMS = ["WEB", "ANDROID", "IOS"];
 
-const REFRESH_COOKIE_NAME = "kaamdaar_refresh";
+const REFRESH_COOKIE_NAME = "kaamdaar_refresh_token";
 
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -58,6 +58,9 @@ const setRefreshCookie = (res, refreshToken, expiresAt) => {
     res.cookie(REFRESH_COOKIE_NAME, refreshToken, {
       ...REFRESH_COOKIE_OPTIONS,
       expires: expiresAt,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     });
   }
 };
@@ -1042,10 +1045,12 @@ export const refreshTokenController = async (req, res) => {
     }
 
     // 2. Extract refresh token
-    const getRefreshTokenFromRequest = (req) =>
-      req.body?.refreshToken || req.cookies?.[REFRESH_COOKIE_NAME];
+    const refreshToken =
+      platform === "WEB"
+        ? req.cookies?.[REFRESH_COOKIE_NAME]
+        : req.body?.refreshToken;
 
-    const refreshToken = getRefreshTokenFromRequest(req);
+    console.log("refresh token", refreshToken);
 
     if (typeof refreshToken !== "string" || !refreshToken.trim()) {
       return sendErrorResponse(
@@ -1057,9 +1062,9 @@ export const refreshTokenController = async (req, res) => {
     }
 
     // 3. Rotate refresh token and generate new access token
-    const tokens = await rotateRefreshToken(refreshToken.trim());
+    const tokens = await rotateRefreshToken(refreshToken.trim(), platform);
 
-    // 4. WEB: store refresh token in HttpOnly cookie
+    // 4. WEB: store new refresh token in HttpOnly cookie
     if (platform === "WEB") {
       setRefreshCookie(res, tokens.refreshToken, tokens.expiresAt);
     }
@@ -1138,9 +1143,10 @@ export const logoutController = async (req, res) => {
         $set: {
           revoked_at: new Date(),
           revoke_reason: "LOGOUT",
+          is_online: false,
         },
       },
-      { new: true },
+      { returnDocument: "after" },
     );
 
     clearRefreshCookie(res);
@@ -1176,15 +1182,18 @@ export const logoutAllController = async (req, res) => {
       );
     }
 
-    await UserSession.updateMany(
+    const now = new Date();
+
+    const result = await UserSession.updateMany(
       {
         user_id: userId,
         revoked_at: null,
       },
       {
         $set: {
-          revoked_at: new Date(),
+          revoked_at: now,
           revoke_reason: "LOGOUT_ALL",
+          is_online: false,
         },
       },
     );
@@ -1194,6 +1203,9 @@ export const logoutAllController = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "All sessions logged out successfully.",
+      data: {
+        sessionsRevoked: result.modifiedCount,
+      },
     });
   } catch (error) {
     console.error("Logout all error:", error.message);
@@ -1225,23 +1237,89 @@ export const getMeController = async (req, res) => {
       );
     }
 
+    const userId = authenticatedUser._id || authenticatedUser.userId;
+
+    if (!isValidObjectId(userId)) {
+      return sendErrorResponse(
+        res,
+        401,
+        "Invalid authenticated user.",
+        "INVALID_USER",
+      );
+    }
+
+    // Customer-specific data
+    let customerProfile = null;
+    let defaultAddress = null;
+
+    if (authenticatedUser.user_type === "CUSTOMER") {
+      customerProfile = await CustomerProfile.findOne({
+        userId,
+      }).lean();
+
+      if (customerProfile) {
+        defaultAddress = await CustomerAddress.findOne({
+          customer_id: customerProfile._id,
+          is_default: true,
+        })
+          .select(
+            "label address_line1 address_line2 landmark city_id postal_code latitude longitude",
+          )
+          .lean();
+      }
+    }
+
     return res.status(200).json({
       success: true,
+      message: "User details fetched successfully.",
       data: {
         user: {
-          id:
-            authenticatedUser._id ||
-            authenticatedUser.userId ||
-            authenticatedUser.id,
-
+          id: authenticatedUser._id.toString(),
           name: authenticatedUser.name,
           mobile: authenticatedUser.mobile,
-          email: authenticatedUser.email,
+          email: authenticatedUser.email ?? null,
           user_type: authenticatedUser.user_type,
           mobile_verified: authenticatedUser.mobile_verified,
           email_verified: authenticatedUser.email_verified,
           profile_completed: authenticatedUser.profile_completed,
+          profile_image: authenticatedUser.profile_image,
+          language: authenticatedUser.language,
+          account_status: authenticatedUser.account_status,
+          createdAt: authenticatedUser.createdAt,
         },
+
+        profile: customerProfile
+          ? {
+              dateOfBirth: customerProfile.dateOfBirth,
+              gender: customerProfile.gender,
+              isBlocked: customerProfile.isBlocked,
+              preferences: customerProfile.preferences,
+              created_at: customerProfile.created_at,
+              updated_at: customerProfile.updated_at,
+            }
+          : null,
+
+        statistics: customerProfile
+          ? {
+              totalBookings: customerProfile.totalBookings,
+              totalSpent: customerProfile.totalSpent,
+              loyaltyPoints: customerProfile.loyaltyPoints,
+            }
+          : null,
+
+        defaultAddress: defaultAddress
+          ? {
+              id: defaultAddress._id,
+              label: defaultAddress.label,
+              address_line1: defaultAddress.address_line1,
+              address_line2: defaultAddress.address_line2,
+              landmark: defaultAddress.landmark,
+              city_id: defaultAddress.city_id,
+              postal_code: defaultAddress.postal_code,
+              latitude: defaultAddress.latitude,
+              longitude: defaultAddress.longitude,
+            }
+          : null,
       },
     });
   } catch (error) {

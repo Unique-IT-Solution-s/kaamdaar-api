@@ -4,6 +4,7 @@ import helmet from "helmet";
 import dotenv from "dotenv"
 import connectDb from "./src/config/db.js";
 import "dotenv/config";
+import cookieParser from "cookie-parser";
 
 dotenv.config()
 
@@ -20,6 +21,8 @@ app.use(cors({
     credentials : true
 }))
 app.use(express.json());
+
+app.use(cookieParser());
 
 app.get("/", (req, res) => {
   res.status(200).json({

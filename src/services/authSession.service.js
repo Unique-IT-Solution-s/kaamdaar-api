@@ -13,35 +13,22 @@ const REFRESH_TOKEN_DAYS = 30;
 const REFRESH_TOKEN_BYTES = 48;
 const REFRESH_TOKEN_LENGTH = REFRESH_TOKEN_BYTES * 2;
 
-const ALLOWED_PLATFORMS = [
-  "WEB",
-  "ANDROID",
-  "IOS",
-  "OTHER",
-];
+const ALLOWED_PLATFORMS = ["WEB", "ANDROID", "IOS", "OTHER"];
 
 // ==================================================
 // HELPER FUNCTIONS
 // ==================================================
 
 const hashToken = (token) => {
-  return crypto
-    .createHash("sha256")
-    .update(token)
-    .digest("hex");
+  return crypto.createHash("sha256").update(token).digest("hex");
 };
 
 const generateRefreshToken = () => {
-  return crypto
-    .randomBytes(REFRESH_TOKEN_BYTES)
-    .toString("hex");
+  return crypto.randomBytes(REFRESH_TOKEN_BYTES).toString("hex");
 };
 
 const getRefreshTokenExpiry = () => {
-  return new Date(
-    Date.now() +
-      REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000
-  );
+  return new Date(Date.now() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000);
 };
 
 const validateRefreshToken = (token) => {
@@ -97,16 +84,13 @@ export const createUserSession = async ({
 
   const createdSessions = await UserSession.create(
     [sessionData],
-    mongoSession ? { session: mongoSession } : {}
+    mongoSession ? { session: mongoSession } : {},
   );
 
   const session = createdSessions[0];
 
   try {
-    const accessToken = generateAccessToken(
-      user,
-      session._id
-    );
+    const accessToken = generateAccessToken(user, session._id);
 
     return {
       sessionId: session._id,
@@ -128,10 +112,14 @@ export const createUserSession = async ({
 // 2. ROTATE REFRESH TOKEN
 // ==================================================
 
-export const rotateRefreshToken = async (refreshToken) => {
+export const rotateRefreshToken = async (refreshToken, platform) => {
   if (!validateRefreshToken(refreshToken)) {
     throw new Error("Invalid refresh token.");
   }
+
+  console.log("Refresh token length:", refreshToken.length);
+  console.log("Expected token length:", REFRESH_TOKEN_LENGTH);
+  console.log("Refresh token valid:", validateRefreshToken(refreshToken));
 
   const oldHash = hashToken(refreshToken);
   const now = new Date();
@@ -139,9 +127,12 @@ export const rotateRefreshToken = async (refreshToken) => {
   // Find an active, unexpired session.
   const session = await UserSession.findOne({
     refresh_token_hash: oldHash,
+    platform,
     revoked_at: null,
     expires_at: { $gt: now },
   });
+
+  console.log("Session found:", Boolean(session));
 
   if (!session) {
     throw new Error("Invalid or expired session.");
@@ -152,6 +143,9 @@ export const rotateRefreshToken = async (refreshToken) => {
     _id: session.user_id,
     account_status: "ACTIVE",
   });
+
+  console.log("User found:", Boolean(user));
+  console.log("Account status:", user?.account_status);
 
   if (!user) {
     // Revoke session if user is no longer active.
@@ -166,7 +160,7 @@ export const rotateRefreshToken = async (refreshToken) => {
           revoke_reason: "ACCOUNT_DISABLED",
           is_online: false,
         },
-      }
+      },
     );
 
     throw new Error("User account is unavailable.");
@@ -195,20 +189,15 @@ export const rotateRefreshToken = async (refreshToken) => {
       },
     },
     {
-      new: true,
-    }
+      returnDocument: "after",
+    },
   );
 
   if (!updatedSession) {
-    throw new Error(
-      "Refresh token has already been used or revoked."
-    );
+    throw new Error("Refresh token has already been used or revoked.");
   }
 
-  const accessToken = generateAccessToken(
-    user,
-    updatedSession._id
-  );
+  const accessToken = generateAccessToken(user, updatedSession._id);
 
   return {
     sessionId: updatedSession._id,
@@ -245,13 +234,11 @@ export const revokeUserSession = async (refreshToken) => {
     },
     {
       new: true,
-    }
+    },
   );
 
   if (!revokedSession) {
-    throw new Error(
-      "Session not found or already revoked."
-    );
+    throw new Error("Session not found or already revoked.");
   }
 
   return revokedSession;
@@ -280,6 +267,6 @@ export const revokeAllUserSessions = async (userId) => {
         is_online: false,
         last_active: now,
       },
-    }
+    },
   );
 };
