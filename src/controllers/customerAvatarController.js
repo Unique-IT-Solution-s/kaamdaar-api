@@ -13,7 +13,7 @@ const findCustomer = async (userId) => {
   return User.findOne({
     _id: userId,
     user_type: "CUSTOMER",
-    is_active: true,
+    account_status : "ACTIVE"
   });
 };
 
@@ -120,6 +120,8 @@ export const updateCustomerAvatar = async (req, res) => {
     }
 
     const customer = await findCustomer(userId);
+    console.log("customer", customer)
+    console.log("userid ", userId)
 
     if (!customer) {
       return res.status(404).json({

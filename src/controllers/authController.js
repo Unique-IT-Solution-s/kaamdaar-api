@@ -926,13 +926,25 @@ export const verifyOtpController = async (req, res) => {
     const deviceId = req.body.device_id || req.body.deviceId || null;
 
     const deviceName = req.body.deviceName || "Web Browser";
+    const platform = req.body?.platform || "WEB";
+
+    const allowedPlatforms = ["WEB", "ANDROID", "IOS"];
+
+    if (!allowedPlatforms.includes(platform)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid platform.",
+      });
+    }
 
     const sessionData = await createUserSession({
       user,
-      platform: "WEB",
+      platform,
       deviceId,
       deviceName,
     });
+
+    // console.log("session data", sessionData);
 
     // ------------------------------------------------
     // 10. FETCH CUSTOMER ADDRESSES
@@ -1044,7 +1056,7 @@ export const refreshTokenController = async (req, res) => {
       );
     }
 
-    // 2. Extract refresh token
+    // 2. Extract refresh token according to the platform
     const refreshToken =
       platform === "WEB"
         ? req.cookies?.[REFRESH_COOKIE_NAME]
@@ -1227,6 +1239,7 @@ export const logoutAllController = async (req, res) => {
 export const getMeController = async (req, res) => {
   try {
     const authenticatedUser = req.user?.user || req.user;
+    console.log("authenticate user ", authenticatedUser)
 
     if (!authenticatedUser) {
       return sendErrorResponse(
@@ -1238,8 +1251,9 @@ export const getMeController = async (req, res) => {
     }
 
     const userId = authenticatedUser._id || authenticatedUser.userId;
+    // console.log("userId", userId.toString())
 
-    if (!isValidObjectId(userId)) {
+    if (!isValidObjectId(userId.toString())) {
       return sendErrorResponse(
         res,
         401,

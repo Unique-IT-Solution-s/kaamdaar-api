@@ -1,5 +1,4 @@
 import express from "express";
-import { verifyFirebaseToken } from "../middleware/verifyFirebaseToken.js";
 import { getCustomerProfile, logoutCustomer, updateCustomerProfile } from "../controllers/customerAuthController.js";
 // import { verifyAccessToken } from "../middleware/authmiddleware.js";
 import { deleteCustomerAvatar, getCustomerAvatar, updateCustomerAvatar } from "../controllers/customerAvatarController.js";
