@@ -138,7 +138,7 @@ export const updateCustomerAvatar = async (req, res) => {
 
     // Upload the new image first
     const result = await uploadToCloudinary(req.file.buffer, userId);
-    console.log("result of couldnary upload", result)
+    // console.log("result of couldnary upload", result)
 
     newPublicId = result.public_id;
 

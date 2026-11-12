@@ -277,7 +277,7 @@ export const makeDefaultCustomerAddress = async (req, res) => {
     // STEP 1: Get authenticated user
     const userId = req.user?.id;
     const userType = req.user?.user?.user_type;
-    console.log("user id", userId)
+    console.log("user id", userId);
 
     if (!userId) {
       return res.status(401).json({
@@ -315,7 +315,7 @@ export const makeDefaultCustomerAddress = async (req, res) => {
         message: "Customer profile not found.",
       });
     }
-    console.log("customer profile", customerProfile)
+    console.log("customer profile", customerProfile);
 
     // console.log("addressid", addressId)
     // console.log("customer profile id", customerProfile._id.toString())
@@ -454,7 +454,6 @@ export const makeDefaultCustomerAddress = async (req, res) => {
   }
 };
 
-
 export const deleteCustomerAddress = async (req, res) => {
   let session;
 
@@ -493,9 +492,9 @@ export const deleteCustomerAddress = async (req, res) => {
 
     let deletedAddressId = null;
     let newDefaultAddressId = null;
+    let nextDefaultAddress = null;
 
     await session.withTransaction(async () => {
-
       // STEP 1: Find customer profile
       const customerProfile = await CustomerProfile.findOne({
         userId,
@@ -512,7 +511,7 @@ export const deleteCustomerAddress = async (req, res) => {
       // STEP 2: Find address and verify ownership
       const address = await CustomerAddress.findOne({
         _id: addressId,
-        customer_id: customerProfile._id.toString(),
+        customer_id: customerProfile._id,
       })
         .select("_id is_default")
         .session(session);
@@ -554,7 +553,8 @@ export const deleteCustomerAddress = async (req, res) => {
         },
         { session },
       );
-      console.log("update result", updateResult)
+
+      console.log("Address count update result:", updateResult);
 
       if (updateResult.matchedCount !== 1) {
         const error = new Error(
@@ -567,18 +567,16 @@ export const deleteCustomerAddress = async (req, res) => {
       // STEP 6: If deleted address was default,
       // make another saved address the default
       if (wasDefault) {
-
-        const nextDefaultAddress = await CustomerAddress.findOne({
+        const remainingAddress = await CustomerAddress.findOne({
           customer_id: customerProfile._id,
         })
           .sort({ created_at: -1, _id: -1 })
           .session(session);
 
-        if (nextDefaultAddress) {
-
+        if (remainingAddress) {
           const defaultUpdateResult = await CustomerAddress.updateOne(
             {
-              _id: nextDefaultAddress._id,
+              _id: remainingAddress._id,
               customer_id: customerProfile._id,
             },
             {
@@ -591,21 +589,41 @@ export const deleteCustomerAddress = async (req, res) => {
             throw new Error("Unable to assign a new default address.");
           }
 
-          newDefaultAddressId = nextDefaultAddress._id;
+          newDefaultAddressId = remainingAddress._id;
         }
       }
     });
 
-    // STEP 7: Success response
+    // STEP 5: Fetch new default address with location details
+    if (newDefaultAddressId) {
+      nextDefaultAddress = await CustomerAddress.findById(newDefaultAddressId)
+        .populate({
+          path: "city_id",
+          select: "city_name state_id country_id",
+          populate: [
+            {
+              path: "state_id",
+              select: "state_name country_id",
+            },
+            {
+              path: "country_id",
+              select: "country_name country_code",
+            },
+          ],
+        })
+        .lean();
+    }
+
+    // STEP 6: Success response
     return res.status(200).json({
       success: true,
       message: "Address deleted successfully.",
       data: {
         deleted_address_id: deletedAddressId,
         new_default_address_id: newDefaultAddressId,
+        new_default_address: nextDefaultAddress,
       },
     });
-
   } catch (error) {
     console.error("Delete customer address error:", error);
 
@@ -622,11 +640,11 @@ export const deleteCustomerAddress = async (req, res) => {
         ? error.message
         : "Failed to delete customer address.",
     });
-
   } finally {
     if (session) {
       await session.endSession();
     }
   }
 };
+
 

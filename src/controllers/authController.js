@@ -1435,7 +1435,7 @@ export const updateProfileController = async (req, res) => {
     }
 
     //update profile fields
-    user.name = `${firstName}${lastName}`;
+    user.name = `${firstName} ${lastName}`;
 
     if (normalizedEmail !== undefined) {
       if (normalizedEmail) {
