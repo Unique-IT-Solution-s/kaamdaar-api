@@ -65,7 +65,7 @@ const customerAddressSchema = new mongoose.Schema(
     is_default: {
       type: Boolean,
       default: false,
-    },
+    }
   },
   {
     timestamps: {
@@ -76,15 +76,21 @@ const customerAddressSchema = new mongoose.Schema(
   },
 );
 
-
-
 // Ensure at most one default address per customer
 customerAddressSchema.index(
-  {customer_id : 1}, 
-  {unique : true, partialFilterExpression : {is_default : true}}, 
-  {name : "one_default_address_per_customer"}
-)
+  { customer_id: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      is_default: true,
+    },
+    name: "one_default_address_per_customer",
+  },
+);
 
-const CustomerAddress = mongoose.model("CustomerAddress", customerAddressSchema);
+const CustomerAddress = mongoose.model(
+  "CustomerAddress",
+  customerAddressSchema,
+);
 
 export default CustomerAddress;

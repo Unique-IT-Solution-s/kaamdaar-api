@@ -28,6 +28,6 @@ const stateSchema = new mongoose.Schema({
 
 stateSchema.index({country_id : 1, state_name : 1}, {unique : true})
 
-const State = mongoose.model("Sate", stateSchema)
+const State = mongoose.model("State", stateSchema)
 
 export default State

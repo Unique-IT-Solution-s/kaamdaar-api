@@ -77,14 +77,16 @@ export const getCustomerAvatar = async (req, res) => {
       });
     }
 
+    const profileImage = customer.profile_image ?? {
+      url: null,
+      public_id: null,
+    };
+
     return res.status(200).json({
       success: true,
       message: "Customer profile picture fetched successfully.",
       data: {
-        profile_image: customer.profile_image ?? {
-          url: null,
-          public_id: null,
-        },
+        profile_image: profileImage
       },
     });
   } catch (error) {
@@ -119,6 +121,7 @@ export const updateCustomerAvatar = async (req, res) => {
       });
     }
 
+        // Find authenticated customer in User collection
     const customer = await findCustomer(userId);
     console.log("customer", customer)
     console.log("userid ", userId)
@@ -130,11 +133,12 @@ export const updateCustomerAvatar = async (req, res) => {
       });
     }
 
-    // Remember the existing Cloudinary image
+    // Store existing image public ID
     const oldPublicId = customer.profile_image?.public_id ?? null;
 
     // Upload the new image first
     const result = await uploadToCloudinary(req.file.buffer, userId);
+    console.log("result of couldnary upload", result)
 
     newPublicId = result.public_id;
 
@@ -253,7 +257,7 @@ export const deleteCustomerAvatar = async (req, res) => {
         // as completely failed just because Cloudinary cleanup failed.
         console.error(
           "Failed to delete avatar from Cloudinary:",
-          cleanupError
+          cleanupError.message
         );
       }
     }

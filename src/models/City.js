@@ -46,7 +46,15 @@ const citySchema = new mongoose.Schema({
     collection: "cities",
 })
 
-citySchema.index({state_id: 1, city_name: 1}, {unique : true})
+citySchema.index(
+  {country_id: 1, state_id: 1, city_name: 1 },
+  { unique: true }
+);
+
+citySchema.index({
+  is_active: 1,
+  state_id: 1,
+});
 
 const City = mongoose.model("City", citySchema)
 

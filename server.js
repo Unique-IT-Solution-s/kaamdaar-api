@@ -11,6 +11,8 @@ dotenv.config()
 import authRoutes from "./src/routes/authRoutes.js"
 import authenticatedRoutes from "./src/routes/authenticatedRoutes.js";
 import customerAuthRoutes from "./src/routes/customerAuthRoutes.js";
+import customerAddressRoutes from "./src/routes/customerAddress.routes.js"
+import locationRoutes from "./src/routes/location.routes.js"
 
 
 const app = express();
@@ -36,6 +38,8 @@ const port = process.env.PORT || 4000
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1", authenticatedRoutes);
 app.use("/api/v1/auth", customerAuthRoutes);
+app.use("/api/v1/customer", customerAddressRoutes);
+app.use("/api/v1/location", locationRoutes);
 
 const startServer = async () => {
   await connectDb();

@@ -1,4 +1,3 @@
-
 import mongoose from "mongoose";
 
 const customerProfileSchema = new mongoose.Schema(
@@ -54,6 +53,12 @@ const customerProfileSchema = new mongoose.Schema(
         default: "en",
       },
     },
+    address_count: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+    },
   },
   {
     timestamps: {
@@ -61,9 +66,12 @@ const customerProfileSchema = new mongoose.Schema(
       updatedAt: "updated_at",
     },
     collection: "customers",
-  }
+  },
 );
 
-const CustomerProfile = mongoose.model("CustomerProfile", customerProfileSchema );
+const CustomerProfile = mongoose.model(
+  "CustomerProfile",
+  customerProfileSchema,
+);
 
 export default CustomerProfile;
