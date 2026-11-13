@@ -57,6 +57,11 @@ pincodeSchema.index(
   }
 );
 
+pincodeSchema.index({
+  city_id: 1,
+  is_active: 1,
+});
+
 const Pincode = mongoose.model("Pincode", pincodeSchema);
 
 export default Pincode;
