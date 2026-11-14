@@ -75,13 +75,12 @@ const providerDocumentSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { _id: true }
+  { _id: true },
 );
 
-
-/* =========================================
+/* =============================== 
    2. PROVIDER SERVICE AREA SCHEMA
-========================================= */
+   =============================== */
 
 const providerServiceAreaSchema = new mongoose.Schema(
   {
@@ -98,13 +97,12 @@ const providerServiceAreaSchema = new mongoose.Schema(
       },
     ],
   },
-  { _id: false }
+  { _id: false },
 );
 
-
-/* =========================================
+/* ===============================
    3. PROVIDER RATING SCHEMA
-========================================= */
+   =============================== */
 
 const providerRatingSchema = new mongoose.Schema(
   {
@@ -153,9 +151,8 @@ const providerRatingSchema = new mongoose.Schema(
       },
     },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 /* =========================================
    4. PROVIDER PERFORMANCE SCHEMA
@@ -168,28 +165,24 @@ const providerPerformanceSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
-
     completed_bookings: {
       type: Number,
       default: 0,
       min: 0,
     },
-
     cancelled_bookings: {
       type: Number,
       default: 0,
       min: 0,
     },
-
     active_bookings: {
       type: Number,
       default: 0,
       min: 0,
     },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 /* =========================================
    5. PROVIDER PROFILE MAIN SCHEMA
@@ -203,7 +196,6 @@ const providerProfileSchema = new mongoose.Schema(
       required: true,
       immutable: true,
     },
-
 
     // -------------------------------------
     // B. BASIC PROVIDER INFORMATION
@@ -248,7 +240,6 @@ const providerProfileSchema = new mongoose.Schema(
       default: 0,
     },
 
-
     // -------------------------------------
     // C. PROVIDER APPROVAL
     // -------------------------------------
@@ -279,14 +270,14 @@ const providerProfileSchema = new mongoose.Schema(
       },
     },
 
-
     // -------------------------------------
     // D. KYC VERIFICATION
     // -------------------------------------
 
     kyc: {
       status: {
-        type: String,enum: [ "NOT_SUBMITTED", "PENDING", "APPROVED", "REJECTED"],
+        type: String,
+        enum: ["NOT_SUBMITTED", "PENDING", "APPROVED", "REJECTED"],
         default: "NOT_SUBMITTED",
       },
 
@@ -295,7 +286,6 @@ const providerProfileSchema = new mongoose.Schema(
         default: [],
       },
     },
-
 
     // -------------------------------------
     // E. SERVICES OFFERED
@@ -308,7 +298,6 @@ const providerProfileSchema = new mongoose.Schema(
       },
     ],
 
-
     // -------------------------------------
     // F. SERVICE LOCATIONS
     // -------------------------------------
@@ -318,6 +307,65 @@ const providerProfileSchema = new mongoose.Schema(
       default: [],
     },
 
+    // Registered/base service location.
+    service_location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+        default: undefined,
+        validate: {
+          validator: function (coordinates) {
+            if (!coordinates) return true;
+
+            return (
+              coordinates.length === 2 &&
+              coordinates[0] >= -180 &&
+              coordinates[0] <= 180 &&
+              coordinates[1] >= -90 &&
+              coordinates[1] <= 90
+            );
+          },
+          message: "Invalid service location coordinates",
+        },
+      },
+    },
+
+    // Provider's latest live GPS location.
+    current_location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+        default: undefined,
+        validate: {
+          validator: function (coordinates) {
+            if (!coordinates) return true;
+
+            return (
+              coordinates.length === 2 &&
+              coordinates[0] >= -180 &&
+              coordinates[0] <= 180 &&
+              coordinates[1] >= -90 &&
+              coordinates[1] <= 90
+            );
+          },
+          message: "Invalid current location coordinates",
+        },
+      },
+    },
+
+    // Last successful live GPS update.
+    location_updated_at: {
+      type: Date,
+      default: null,
+    },
 
     // -------------------------------------
     // G. PROVIDER RATINGS
@@ -328,7 +376,6 @@ const providerProfileSchema = new mongoose.Schema(
       default: () => ({}),
     },
 
-
     // -------------------------------------
     // H. PROVIDER BOOKING PERFORMANCE
     // -------------------------------------
@@ -337,7 +384,6 @@ const providerProfileSchema = new mongoose.Schema(
       type: providerPerformanceSchema,
       default: () => ({}),
     },
-
 
     // -------------------------------------
     // I. BOOKING AVAILABILITY
@@ -352,19 +398,15 @@ const providerProfileSchema = new mongoose.Schema(
   {
     timestamps: true,
     collection: "provider_profiles",
-  }
+  },
 );
-
 
 /* =========================================
    6. INDEXES
 ========================================= */
 
 // Find provider profile using User ID.
-providerProfileSchema.index(
-  { userId: 1 },
-  { unique: true }
-);
+providerProfileSchema.index({ userId: 1 }, { unique: true });
 
 // Admin KYC queue and approval filtering.
 providerProfileSchema.index({
@@ -397,6 +439,15 @@ providerProfileSchema.index({
   is_accepting_bookings: 1,
 });
 
+// Find providers near their registered service location.
+providerProfileSchema.index({
+  service_location: "2dsphere",
+});
+
+// Find providers near their current live location.
+providerProfileSchema.index({
+  current_location: "2dsphere",
+});
 
 /* =========================================
    7. EXPORT MODEL
@@ -407,4 +458,3 @@ const ProviderProfile =
   mongoose.model("ProviderProfile", providerProfileSchema);
 
 export default ProviderProfile;
-   

@@ -1,4 +1,3 @@
-
 import mongoose from "mongoose";
 
 /* =========================================
@@ -7,9 +6,16 @@ import mongoose from "mongoose";
 
 const bookingAddressSchema = new mongoose.Schema(
   {
+    label: {
+      type: String,
+      enum: ["HOME", "OFFICE", "OTHER"],
+      required: true,
+    },
+
     recipient_name: {
       type: String,
       trim: true,
+      maxlength: 150,
       default: null,
     },
 
@@ -23,18 +29,27 @@ const bookingAddressSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      maxlength: 150,
     },
 
     address_line2: {
       type: String,
       trim: true,
+      maxlength: 150,
       default: null,
     },
 
     landmark: {
       type: String,
       trim: true,
+      maxlength: 100,
       default: null,
+    },
+
+    city_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "City",
+      required: true,
     },
 
     city: {
@@ -43,7 +58,25 @@ const bookingAddressSchema = new mongoose.Schema(
       trim: true,
     },
 
+    state_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "State",
+      required: true,
+    },
+
     state: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    country_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Country",
+      required: true,
+    },
+
+    country: {
       type: String,
       required: true,
       trim: true,
@@ -53,6 +86,7 @@ const bookingAddressSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      match: /^[1-9][0-9]{5}$/,
     },
 
     latitude: {
@@ -149,6 +183,13 @@ const assignmentHistorySchema = new mongoose.Schema(
       required: true,
     },
 
+    // Link this event to the offer that caused it.
+    offer_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BookingOffer",
+      default: null,
+    },
+
     action: {
       type: String,
       enum: [
@@ -163,6 +204,7 @@ const assignmentHistorySchema = new mongoose.Schema(
     reason: {
       type: String,
       trim: true,
+      maxlength: 500,
       default: null,
     },
 
@@ -209,6 +251,7 @@ const bookingStatusHistorySchema = new mongoose.Schema(
     note: {
       type: String,
       trim: true,
+      maxlength: 500,
       default: null,
     },
 
@@ -242,6 +285,7 @@ const cancellationSchema = new mongoose.Schema(
     cancellation_reason: {
       type: String,
       trim: true,
+      maxlength: 500,
       default: null,
     },
 
@@ -256,6 +300,10 @@ const cancellationSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+      validate: {
+        validator: Number.isSafeInteger,
+        message: "Cancellation fee must be an integer in paise.",
+      },
     },
 
     cancelled_at: {
@@ -283,7 +331,6 @@ const bookingSchema = new mongoose.Schema(
       trim: true,
     },
 
-
     // -------------------------------------
     // B. CUSTOMER AND PROVIDER
     // -------------------------------------
@@ -299,7 +346,6 @@ const bookingSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
-
 
     // -------------------------------------
     // C. CATEGORY AND SERVICE
@@ -337,7 +383,6 @@ const bookingSchema = new mongoose.Schema(
       },
     },
 
-
     // -------------------------------------
     // D. SERVICE ADDRESS
     // -------------------------------------
@@ -352,7 +397,6 @@ const bookingSchema = new mongoose.Schema(
       type: bookingAddressSchema,
       required: true,
     },
-
 
     // -------------------------------------
     // E. BOOKING SCHEDULE
@@ -374,7 +418,6 @@ const bookingSchema = new mongoose.Schema(
       default: "Asia/Kolkata",
     },
 
-
     // -------------------------------------
     // F. BOOKING STATUS
     // -------------------------------------
@@ -393,7 +436,6 @@ const bookingSchema = new mongoose.Schema(
       required: true,
     },
 
-
     // -------------------------------------
     // G. PRICING SNAPSHOT
     // -------------------------------------
@@ -402,7 +444,6 @@ const bookingSchema = new mongoose.Schema(
       type: bookingPricingSchema,
       required: true,
     },
-
 
     // -------------------------------------
     // H. PAYMENT TRACKING
@@ -427,7 +468,6 @@ const bookingSchema = new mongoose.Schema(
       default: null,
     },
 
-
     // -------------------------------------
     // I. BOOKING INSTRUCTIONS
     // -------------------------------------
@@ -439,7 +479,6 @@ const bookingSchema = new mongoose.Schema(
       default: null,
     },
 
-
     // -------------------------------------
     // J. PROVIDER ASSIGNMENT HISTORY
     // -------------------------------------
@@ -448,7 +487,6 @@ const bookingSchema = new mongoose.Schema(
       type: [assignmentHistorySchema],
       default: [],
     },
-
 
     // -------------------------------------
     // K. BOOKING STATUS HISTORY
@@ -459,7 +497,6 @@ const bookingSchema = new mongoose.Schema(
       default: [],
     },
 
-
     // -------------------------------------
     // L. CANCELLATION DETAILS
     // -------------------------------------
@@ -468,7 +505,6 @@ const bookingSchema = new mongoose.Schema(
       type: cancellationSchema,
       default: () => ({}),
     },
-
 
     // -------------------------------------
     // M. IMPORTANT TIMESTAMPS
@@ -494,7 +530,6 @@ const bookingSchema = new mongoose.Schema(
       default: null,
     },
 
-
     // -------------------------------------
     // N. ADMIN TRACKING
     // -------------------------------------
@@ -512,7 +547,6 @@ const bookingSchema = new mongoose.Schema(
       default: null,
     },
   },
-
   {
     timestamps: {
       createdAt: "created_at",
@@ -546,6 +580,13 @@ bookingSchema.index({
 bookingSchema.index({
   provider_id: 1,
   booking_status: 1,
+});
+
+// Provider scheduling and conflict lookup.
+bookingSchema.index({
+  provider_id: 1,
+  booking_status: 1,
+  scheduled_at: 1,
 });
 
 // Admin dashboard booking filters.

@@ -13,6 +13,7 @@ import authenticatedRoutes from "./src/routes/authenticatedRoutes.js";
 import customerAuthRoutes from "./src/routes/customerAuthRoutes.js";
 import customerAddressRoutes from "./src/routes/customerAddress.routes.js"
 import locationRoutes from "./src/routes/location.routes.js"
+import adminDashboardRoutes from "./src/routes/Admin/dashboard.routes.js"
 
 
 const app = express();
@@ -40,6 +41,7 @@ app.use("/api/v1", authenticatedRoutes);
 app.use("/api/v1/auth", customerAuthRoutes);
 app.use("/api/v1/customer", customerAddressRoutes);
 app.use("/api/v1/location", locationRoutes);
+app.use("/api/v1/admin/dashboard", adminDashboardRoutes );
 
 const startServer = async () => {
   await connectDb();

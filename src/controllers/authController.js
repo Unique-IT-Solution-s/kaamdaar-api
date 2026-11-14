@@ -784,11 +784,13 @@ export const verifyOtpController = async (req, res) => {
     // ------------------------------------------------
 
     if (user) {
-      // Only customer login is allowed through this endpoint.
-      if (user.user_type !== "CUSTOMER") {
+      // Allow only these user types through this web login API.
+      const allowedUserTypes = ["CUSTOMER", "ADMIN", "SUPER_ADMIN"];
+
+      if (!allowedUserTypes.includes(user.user_type)) {
         return res.status(403).json({
           status: false,
-          message: "This account cannot log in as a customer.",
+          message: "This account cannot log in through this application.",
         });
       }
 
@@ -808,34 +810,36 @@ export const verifyOtpController = async (req, res) => {
         });
       }
 
-      // Find customer profile.
-      customerProfile = await CustomerProfile.findOne({
-        userId: user._id,
-      });
-
-      // Create missing profile if necessary.
-      if (!customerProfile) {
-        customerProfile = await CustomerProfile.findOneAndUpdate(
-          { userId: user._id },
-          {
-            $setOnInsert: {
-              userId: user._id,
-            },
-          },
-          {
-            new: true,
-            upsert: true,
-            setDefaultsOnInsert: true,
-          },
-        );
-      }
-
-      // Check customer-specific blocking.
-      if (customerProfile.isBlocked) {
-        return res.status(403).json({
-          status: false,
-          message: "Your customer account is blocked.",
+      // Customer-specific profile handling.
+      if (user.user_type === "CUSTOMER") {
+        customerProfile = await CustomerProfile.findOne({
+          userId: user._id,
         });
+
+        // Create missing customer profile if necessary.
+        if (!customerProfile) {
+          customerProfile = await CustomerProfile.findOneAndUpdate(
+            { userId: user._id },
+            {
+              $setOnInsert: {
+                userId: user._id,
+              },
+            },
+            {
+              new: true,
+              upsert: true,
+              setDefaultsOnInsert: true,
+            },
+          );
+        }
+
+        // Check customer-specific blocking.
+        if (customerProfile.isBlocked) {
+          return res.status(403).json({
+            status: false,
+            message: "Your customer account is blocked.",
+          });
+        }
       }
 
       // Link Firebase UID if not already linked.
@@ -950,20 +954,31 @@ export const verifyOtpController = async (req, res) => {
     // 10. FETCH CUSTOMER ADDRESSES
     // ------------------------------------------------
 
-    const addresses = await CustomerAddress.find({
-      customer_id: customerProfile._id,
-    })
-      .populate("city_id")
-      .sort({
-        is_default: -1,
-        created_at: -1,
+    let addresses = [];
+    let defaultAddress = null;
+
+    if (user.user_type === "CUSTOMER" && customerProfile) {
+      addresses = await CustomerAddress.find({
+        customer_id: customerProfile._id,
       })
-      .lean();
+        .populate("city_id")
+        .sort({
+          is_default: -1,
+          created_at: -1,
+        })
+        .lean();
 
-    const defaultAddress =
-      addresses.find((address) => address.is_default) || null;
+      defaultAddress = addresses.find((address) => address.is_default) || null;
+    }
 
-    const nextStep = isNewUser ? "PROFILE_REQUIRED" : "HOME";
+    // Determine next step according to user type.
+    let nextStep;
+
+    if (user.user_type === "ADMIN" || user.user_type === "SUPER_ADMIN") {
+      nextStep = "ADMIN_DASHBOARD";
+    } else {
+      nextStep = isNewUser ? "PROFILE_REQUIRED" : "HOME";
+    }
 
     // ------------------------------------------------
     // 11. SET REFRESH TOKEN COOKIE
@@ -976,6 +991,10 @@ export const verifyOtpController = async (req, res) => {
       path: "/api/v1/auth",
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
+
+    // ------------------------------------------------
+    // 12. SUCCESS RESPONSE
+    // ------------------------------------------------
 
     // ------------------------------------------------
     // 12. SUCCESS RESPONSE
@@ -1004,15 +1023,18 @@ export const verifyOtpController = async (req, res) => {
           mobile_verified: user.mobile_verified,
         },
 
-        customerProfile: {
-          totalBookings: customerProfile.totalBookings,
-          totalSpent: customerProfile.totalSpent,
-          loyaltyPoints: customerProfile.loyaltyPoints,
-          dateOfBirth: customerProfile.dateOfBirth,
-          gender: customerProfile.gender,
-          preferences: customerProfile.preferences,
-          isBlocked: customerProfile.isBlocked,
-        },
+        // Only customers have CustomerProfile.
+        customerProfile: customerProfile
+          ? {
+              totalBookings: customerProfile.totalBookings,
+              totalSpent: customerProfile.totalSpent,
+              loyaltyPoints: customerProfile.loyaltyPoints,
+              dateOfBirth: customerProfile.dateOfBirth,
+              gender: customerProfile.gender,
+              preferences: customerProfile.preferences,
+              isBlocked: customerProfile.isBlocked,
+            }
+          : null,
 
         addresses,
         defaultAddress,
@@ -1239,7 +1261,7 @@ export const logoutAllController = async (req, res) => {
 export const getMeController = async (req, res) => {
   try {
     const authenticatedUser = req.user?.user || req.user;
-    console.log("authenticate user ", authenticatedUser)
+    console.log("authenticate user ", authenticatedUser);
 
     if (!authenticatedUser) {
       return sendErrorResponse(

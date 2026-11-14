@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import CustomerProfile from "../models/CustomerProfile.js";
 import CustomerAddress from "../models/CustomerAddress.js";
 import Pincode from "../models/Pincode.js";
+import { resolvePincode } from "../utils/resolvePincode.js";
 
 export const addCustomerAddress = async (req, res) => {
   let session;
@@ -647,4 +648,299 @@ export const deleteCustomerAddress = async (req, res) => {
   }
 };
 
+export const updateCustomerAddress = async (req, res) => {
+  try {
+    // STEP 1: Get authenticated user
+    const userId = req.user?.id;
+    const userType = req.user?.user?.user_type;
 
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+    }
+
+    // STEP 2: Check customer role
+    if (userType !== "CUSTOMER") {
+      return res.status(403).json({
+        success: false,
+        message: "Only customers can update customer addresses.",
+      });
+    }
+
+    // STEP 3: Get address ID from URL
+    const { addressId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(addressId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid address ID.",
+      });
+    }
+
+    // STEP 4: Find customer profile
+    const customerProfile = await CustomerProfile.findOne({
+      userId,
+    }).select("_id");
+
+    if (!customerProfile) {
+      return res.status(404).json({
+        success: false,
+        message: "Customer profile not found.",
+      });
+    }
+
+    // STEP 5: Find address and verify ownership
+    // Also fetch existing postal_code for updates that don't change PIN.
+    const existingAddress = await CustomerAddress.findOne({
+      _id: addressId,
+      customer_id: customerProfile._id,
+    }).select("_id postal_code");
+
+    if (!existingAddress) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found.",
+      });
+    }
+
+    // STEP 6: Extract request body
+    const { label, address_line1, address_line2, landmark, postal_code } =
+      req.body;
+
+    // STEP 7: Validate allowed fields
+    const allowedFields = [
+      "label",
+      "address_line1",
+      "address_line2",
+      "landmark",
+      "postal_code",
+    ];
+
+    const invalidFields = Object.keys(req.body).filter(
+      (field) => !allowedFields.includes(field),
+    );
+
+    if (invalidFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid fields provided.",
+        invalid_fields: invalidFields,
+      });
+    }
+
+    // STEP 8: Check that at least one field is provided
+    if (Object.keys(req.body).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide at least one field to update.",
+      });
+    }
+
+    const updateData = {};
+
+    // STEP 9: Validate and update label
+    if (label !== undefined) {
+      if (typeof label !== "string" || !label.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid address label.",
+        });
+      }
+
+      const normalizedLabel = label.trim().toUpperCase();
+
+      if (!["HOME", "OFFICE", "OTHER"].includes(normalizedLabel)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid address label. Use HOME, OFFICE or OTHER.",
+        });
+      }
+
+      updateData.label = normalizedLabel;
+    }
+
+    // STEP 10: Validate and update address line 1
+    if (address_line1 !== undefined) {
+      if (typeof address_line1 !== "string" || !address_line1.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Address line 1 cannot be empty.",
+        });
+      }
+
+      const normalizedAddress = address_line1.trim();
+
+      if (normalizedAddress.length > 150) {
+        return res.status(400).json({
+          success: false,
+          message: "Address line must not exceed 150 characters.",
+        });
+      }
+
+      updateData.address_line1 = normalizedAddress;
+    }
+
+    // STEP 11: Validate and update address line 2
+    if (address_line2 !== undefined) {
+      if (address_line2 !== null && typeof address_line2 !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Address line 2 must be a string or null.",
+        });
+      }
+
+      if (address_line2 !== null && address_line2.trim().length > 150) {
+        return res.status(400).json({
+          success: false,
+          message: "Address line 2 must not exceed 150 characters.",
+        });
+      }
+
+      updateData.address_line2 = address_line2?.trim() || null;
+    }
+
+    // STEP 12: Validate and update landmark
+    if (landmark !== undefined) {
+      if (landmark !== null && typeof landmark !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Landmark must be a string or null.",
+        });
+      }
+
+      if (landmark !== null && landmark.trim().length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: "Landmark must not exceed 100 characters.",
+        });
+      }
+
+      updateData.landmark = landmark?.trim() || null;
+    }
+
+    // STEP 13: Resolve PIN code
+    // If a new PIN is provided, use it.
+    // Otherwise, use the existing address PIN.
+    let normalizedPostalCode;
+
+    if (postal_code !== undefined) {
+      if (
+        typeof postal_code !== "string" ||
+        !/^[1-9][0-9]{5}$/.test(postal_code.trim())
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid 6-digit PIN code.",
+        });
+      }
+
+      normalizedPostalCode = postal_code.trim();
+      updateData.postal_code = normalizedPostalCode;
+    } else {
+      normalizedPostalCode = existingAddress.postal_code;
+    }
+
+    // STEP 14: Declare location variables
+    let city = null;
+    let state = null;
+    let country = null;
+    let pincode = null;
+
+    // Resolve from database or external postal API
+    const location = await resolvePincode(normalizedPostalCode);
+
+    city = location.city;
+    state = location.state;
+    country = location.country;
+    pincode = location.pincode;
+
+    // STEP 15: Verify location references
+    if (
+      !city ||
+      !state ||
+      !country ||
+      !pincode ||
+      city.state_id.toString() !== state._id.toString() ||
+      city.country_id.toString() !== country._id.toString() ||
+      state.country_id.toString() !== country._id.toString()
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: "PIN code location mapping is inconsistent.",
+      });
+    }
+
+    // Update city only when PIN code is changed.
+    if (postal_code !== undefined) {
+      updateData.city_id = city._id;
+    }
+
+    // STEP 16: Update address
+    const updatedAddress = await CustomerAddress.findOneAndUpdate(
+      {
+        _id: addressId,
+        customer_id: customerProfile._id,
+      },
+      {
+        $set: updateData,
+      },
+      {
+        returnDocument: "after",
+        runValidators: true,
+      },
+    )
+      .populate({
+        path: "city_id",
+        select: "city_name state_id country_id",
+        populate: [
+          {
+            path: "state_id",
+            select: "state_name country_id",
+          },
+          {
+            path: "country_id",
+            select: "country_name country_code",
+          },
+        ],
+      })
+      .lean();
+
+    if (!updatedAddress) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found or could not be updated.",
+      });
+    }
+
+    // STEP 17: Success response
+    return res.status(200).json({
+      success: true,
+      message: "Address updated successfully.",
+      data: {
+        ...updatedAddress,
+        Pincode_area: {
+          post_offices: pincode.post_offices || [],
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Update customer address error:", error);
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Location data already exists or conflicts with another record.",
+      });
+    }
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.statusCode
+        ? error.message
+        : "Failed to update customer address.",
+    });
+  }
+};
