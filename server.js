@@ -1,54 +1,158 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import dotenv from "dotenv"
-import connectDb from "./src/config/db.js";
 import "dotenv/config";
 import cookieParser from "cookie-parser";
+import { createServer } from "http";
+import { Server } from "socket.io";
 
-dotenv.config()
+import connectDb from "./src/config/db.js";
 
-import authRoutes from "./src/routes/authRoutes.js"
+import authRoutes from "./src/routes/authRoutes.js";
 import authenticatedRoutes from "./src/routes/authenticatedRoutes.js";
 import customerAuthRoutes from "./src/routes/customerAuthRoutes.js";
-import customerAddressRoutes from "./src/routes/customerAddress.routes.js"
-import locationRoutes from "./src/routes/location.routes.js"
-import adminDashboardRoutes from "./src/routes/Admin/dashboard.routes.js"
+import customerAddressRoutes from "./src/routes/customerAddress.routes.js";
+import locationRoutes from "./src/routes/location.routes.js";
+import adminDashboardRoutes from "./src/routes/Admin/dashboard.routes.js";
 
+
+import { socketAuthenticateUser } from "./src/middleware/socketAuth.middleware.js";
 
 const app = express();
 
-app.use(helmet());
-app.use(cors({
-    origin : process.env.FRONTEND_URL,
-    credentials : true
-}))
-app.use(express.json());
+const port = process.env.PORT || 4000;
 
+app.use(helmet());
+
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL,
+    credentials: true,
+  }),
+);
+
+app.use(express.json());
 app.use(cookieParser());
 
 app.get("/", (req, res) => {
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
     message: "Kaamdaar API is running",
   });
 });
 
-const port = process.env.PORT || 4000
-
 app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1", authenticatedRoutes);
 app.use("/api/v1/auth", customerAuthRoutes);
+
+app.use("/api/v1/admin/dashboard", adminDashboardRoutes);
+
+app.use("/api/v1", authenticatedRoutes);
 app.use("/api/v1/customer", customerAddressRoutes);
 app.use("/api/v1/location", locationRoutes);
-app.use("/api/v1/admin/dashboard", adminDashboardRoutes );
+
+// ========================================
+// 1. CREATE HTTP SERVER
+// ========================================
+
+const httpServer = createServer(app);
+
+// ========================================
+// 2. INITIALIZE SOCKET.IO
+// ========================================
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.FRONTEND_URL,
+    credentials: true,
+  },
+});
+
+// ========================================
+// 3. SOCKET.IO AUTHENTICATION
+// ========================================
+
+io.use(socketAuthenticateUser);
+
+// ========================================
+// 4. SOCKET.IO CONNECTION
+// ========================================
+
+io.on("connection", async (socket) => {
+  try {
+    // Get authenticated user
+    const user = socket.data.user;
+
+    console.log("Socket connected:", socket.id);
+    console.log("Connected user:", user.userId);
+    console.log("User role:", user.role);
+
+    // --------------------------------------
+    // Allow only ADMIN and SUPER_ADMIN
+    // --------------------------------------
+
+    const allowedRoles = ["ADMIN", "SUPER_ADMIN"];
+
+    if (!allowedRoles.includes(user.role)) {
+      console.log("Unauthorized socket connection:", user.userId);
+
+      socket.disconnect(true);
+      return;
+    }
+
+    // --------------------------------------
+    // Join admin dashboard room
+    // --------------------------------------
+
+    await socket.join("admin-dashboard");
+
+    console.log(`Admin ${user.userId} joined admin-dashboard room`);
+
+    // --------------------------------------
+    // Send connection confirmation
+    // --------------------------------------
+
+    socket.emit("admin:connected", {
+      success: true,
+      message: "Connected to admin dashboard successfully.",
+    });
+
+    // --------------------------------------
+    // Handle disconnection
+    // --------------------------------------
+
+    socket.on("disconnect", (reason) => {
+      console.log("Socket disconnected:", socket.id, reason);
+    });
+  } catch (error) {
+    console.error("Socket connection error:", error);
+    socket.disconnect(true);
+  }
+});
+
+// ========================================
+// 8. START SERVER
+// ========================================
 
 const startServer = async () => {
-  await connectDb();
+  try {
+    // Connect MongoDB first
+    await connectDb();
 
-  app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-  });
+    // Start HTTP server with Socket.IO
+    httpServer.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+      console.log("Socket.IO server is ready");
+    });
+  } catch (error) {
+    console.error("Server startup failed:", error);
+    process.exit(1);
+  }
 };
 
 startServer();
+
+// ========================================
+// 9. EXPORT
+// ========================================
+
+export { app, httpServer, io };
