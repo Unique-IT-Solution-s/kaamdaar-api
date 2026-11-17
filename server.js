@@ -14,7 +14,7 @@ import customerAuthRoutes from "./src/routes/customerAuthRoutes.js";
 import customerAddressRoutes from "./src/routes/customerAddress.routes.js";
 import locationRoutes from "./src/routes/location.routes.js";
 import adminDashboardRoutes from "./src/routes/Admin/dashboard.routes.js";
-
+import adminCategoryRoutes from "./src/routes/Admin/category.routes.js";
 
 import { socketAuthenticateUser } from "./src/middleware/socketAuth.middleware.js";
 
@@ -45,19 +45,16 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/auth", customerAuthRoutes);
 
 app.use("/api/v1/admin/dashboard", adminDashboardRoutes);
+app.use("/api/v1/admin/categories", adminCategoryRoutes);
 
 app.use("/api/v1", authenticatedRoutes);
 app.use("/api/v1/customer", customerAddressRoutes);
 app.use("/api/v1/location", locationRoutes);
 
-// ========================================
-// 1. CREATE HTTP SERVER
-// ========================================
-
 const httpServer = createServer(app);
 
 // ========================================
-// 2. INITIALIZE SOCKET.IO
+// 1. INITIALIZE SOCKET.IO
 // ========================================
 
 const io = new Server(httpServer, {
@@ -68,13 +65,13 @@ const io = new Server(httpServer, {
 });
 
 // ========================================
-// 3. SOCKET.IO AUTHENTICATION
+// 2. SOCKET.IO AUTHENTICATION
 // ========================================
 
 io.use(socketAuthenticateUser);
 
 // ========================================
-// 4. SOCKET.IO CONNECTION
+// 3. SOCKET.IO CONNECTION
 // ========================================
 
 io.on("connection", async (socket) => {
@@ -130,18 +127,19 @@ io.on("connection", async (socket) => {
 });
 
 // ========================================
-// 8. START SERVER
+// 4. START SERVER
 // ========================================
 
 const startServer = async () => {
   try {
-    // Connect MongoDB first
     await connectDb();
 
     // Start HTTP server with Socket.IO
-    httpServer.listen(port, () => {
+    httpServer.listen(port, "0.0.0.0", () => {
       console.log(`Server running on port ${port}`);
       console.log("Socket.IO server is ready");
+      console.log(`Local API: http://localhost:${port}`);
+      console.log(`Network API: http://YOUR_MAC_IP:${port}`);
     });
   } catch (error) {
     console.error("Server startup failed:", error);
@@ -150,9 +148,5 @@ const startServer = async () => {
 };
 
 startServer();
-
-// ========================================
-// 9. EXPORT
-// ========================================
 
 export { app, httpServer, io };
