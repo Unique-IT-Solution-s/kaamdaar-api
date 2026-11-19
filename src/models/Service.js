@@ -1,9 +1,5 @@
 import mongoose from "mongoose";
 
-/* =========================================
-   1. SERVICE IMAGE SCHEMA
-========================================= */
-
 const serviceImageSchema = new mongoose.Schema(
   {
     url: {
@@ -20,13 +16,8 @@ const serviceImageSchema = new mongoose.Schema(
   },
   {
     _id: false,
-  }
+  },
 );
-
-
-/* =========================================
-   2. SERVICE PRICING SCHEMA
-========================================= */
 
 const servicePricingSchema = new mongoose.Schema(
   {
@@ -52,12 +43,11 @@ const servicePricingSchema = new mongoose.Schema(
   },
   {
     _id: false,
-  }
+  },
 );
 
-
 /* =========================================
-   3. SERVICE MAIN SCHEMA
+   1. SERVICE MAIN SCHEMA
 ========================================= */
 
 const serviceSchema = new mongoose.Schema(
@@ -99,19 +89,17 @@ const serviceSchema = new mongoose.Schema(
       default: null,
     },
 
-
-    // -------------------------------------
-    // C. SERVICE IMAGES
-    // -------------------------------------
-
     images: {
       type: [serviceImageSchema],
       default: [],
+      validate: {
+        validator: (images) => images.length <= 5,
+        message: "Maximum 5 service images are allowed.",
+      },
     },
 
-
     // -------------------------------------
-    // D. FIXED SERVICE PRICING
+    // FIXED SERVICE PRICING
     // -------------------------------------
 
     pricing: {
@@ -119,9 +107,8 @@ const serviceSchema = new mongoose.Schema(
       required: true,
     },
 
-
     // -------------------------------------
-    // E. SERVICE DURATION
+    // SERVICE DURATION
     // -------------------------------------
 
     estimated_duration_minutes: {
@@ -135,9 +122,8 @@ const serviceSchema = new mongoose.Schema(
       },
     },
 
-
     // -------------------------------------
-    // F. SERVICE DISPLAY SETTINGS
+    // SERVICE DISPLAY SETTINGS
     // -------------------------------------
 
     is_active: {
@@ -155,11 +141,14 @@ const serviceSchema = new mongoose.Schema(
       default: 0,
       min: 0,
       max: 10000,
+      validate: {
+        validator: Number.isInteger,
+        message: "Sort order must be a whole number.",
+      },
     },
 
-
     // -------------------------------------
-    // G. ADMIN TRACKING
+    // ADMIN TRACKING
     // -------------------------------------
 
     created_by: {
@@ -179,7 +168,7 @@ const serviceSchema = new mongoose.Schema(
   {
     timestamps: true,
     collection: "services",
-  }
+  },
 );
 
 // Unique service slug.
@@ -188,26 +177,29 @@ serviceSchema.index(
   {
     unique: true,
     name: "unique_service_slug",
-  }
+  },
 );
 
 // Find services belonging to a category.
-serviceSchema.index(
-  { category_id: 1, is_active: 1 }
-);
+serviceSchema.index({ category_id: 1, is_active: 1 });
 
 // Fetch featured active services.
+serviceSchema.index({ is_active: 1, is_featured: 1, sort_order: 1 });
+
 serviceSchema.index(
-  { is_active: 1, is_featured: 1, sort_order: 1 }
+  { category_id: 1, service_name: 1 },
+  {
+    unique: true,
+    name: "unique_service_name_per_category",
+    collation: { locale: "en", strength: 2 },
+  },
 );
 
-
 /* =========================================
-   5. EXPORT MODEL
+  2. EXPORT MODEL
 ========================================= */
 
 const Service =
-  mongoose.models.Service ||
-  mongoose.model("Service", serviceSchema);
+  mongoose.models.Service || mongoose.model("Service", serviceSchema);
 
 export default Service;

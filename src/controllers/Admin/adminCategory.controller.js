@@ -1,6 +1,9 @@
 import mongoose from "mongoose";
 import Category from "../../models/Category.js";
-import { type } from "os";
+import Service from "../../models/Service.js";
+import Exceljs from "exceljs";
+import PDFDocument from "pdfkit";
+import { parse } from "csv-parse/sync";
 
 export const createCategory = async (req, res) => {
   try {
@@ -189,12 +192,83 @@ export const getCategories = async (req, res) => {
 
     //. Fetch categories and count
     const [categories, totalCategories] = await Promise.all([
-      Category.find(filter)
-        .select("-__v")
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+      Category.aggregate([
+        // STEP 1: Apply category filters
+        {
+          $match: filter,
+        },
+
+        // STEP 2: Sort categories
+        {
+          $sort: sort,
+        },
+
+        // STEP 3: Pagination
+        {
+          $skip: skip,
+        },
+        {
+          $limit: limit,
+        },
+
+        // STEP 4: Find services belonging to each category
+        {
+          $lookup: {
+            from: Service.collection.name,
+            let: {
+              categoryId: "$_id",
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: ["$category_id", "$$categoryId"],
+                  },
+                },
+              },
+
+              // STEP 5: Calculate total and active services
+              {
+                $group: {
+                  _id: null,
+
+                  total_count: {
+                    $sum: 1,
+                  },
+
+                  active_count: {
+                    $sum: {
+                      $cond: [{ $eq: ["$is_active", true] }, 1, 0],
+                    },
+                  },
+                },
+              },
+            ],
+            as: "serviceStats",
+          },
+        },
+
+        // STEP 6: Add counts to category
+        {
+          $addFields: {
+            services_count: {
+              $ifNull: [{ $arrayElemAt: ["$serviceStats.total_count", 0] }, 0],
+            },
+
+            active_services_count: {
+              $ifNull: [{ $arrayElemAt: ["$serviceStats.active_count", 0] }, 0],
+            },
+          },
+        },
+
+        // STEP 7: Remove unnecessary fields
+        {
+          $project: {
+            __v: 0,
+            serviceStats: 0,
+          },
+        },
+      ]),
 
       Category.countDocuments(filter),
     ]);
@@ -228,27 +302,27 @@ export const getCategories = async (req, res) => {
 
 export const getCategoryById = async (req, res) => {
   try {
-    const {id} = req.params; 
-    if(!mongoose.isValidObjectId(id)){
-        return res.status(400).json({
-            success : false ,
-            message : "invalid category id"
-        })
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "invalid category id",
+      });
     }
 
     const category = await Category.findById(id).select("-__v").lean();
-    if(!category){
-        return res.status(404).json({
-            success: false ,
-            message : "Category not found"
-        })
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Category not found",
+      });
     }
 
     return res.status(200).json({
-        success : true, 
-        message : "Category fetched by id successfully",
-        data : { category}
-    })
+      success: true,
+      message: "Category fetched by id successfully",
+      data: { category },
+    });
   } catch (error) {
     console.error("Get category details error:", error.message);
 
@@ -259,103 +333,113 @@ export const getCategoryById = async (req, res) => {
   }
 };
 
-
 export const updateCategory = async (req, res) => {
-    try {
-       const {id} = req.params;
-       const adminId = req.user?.id;
-       
-       if(!mongoose.isValidObjectId(id)){
+  try {
+    const { id } = req.params;
+    const adminId = req.user?.id;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Category id",
+      });
+    }
+
+    const category = await Category.findById(id);
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: "Category not found",
+        code: "CATEGORY_NOT_FOUND",
+      });
+    }
+
+    const allowedFields = [
+      "category_name",
+      "slug",
+      "description",
+      "image",
+      "icon",
+      "is_active",
+      "is_featured",
+      "sort_order",
+      "commission_percentage",
+    ];
+
+    const providedFields = Object.keys(req.body);
+    if (providedFields.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide at least one field to update.",
+        code: "EMPTY_UPDATE",
+      });
+    }
+
+    const invalidFields = providedFields.filter(
+      (field) => !allowedFields.includes(field),
+    );
+    if (invalidFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_FIELDS",
+        message: "Some fields are not allowed to update.",
+        invalid_fields: invalidFields,
+      });
+    }
+
+    if (Object.hasOwn(req.body, "slug")) {
+      if (typeof req.body.slug !== "string") {
         return res.status(400).json({
-            success : false ,
-            message : "Invalid Category id"
-        })
-       }
+          success: false,
+          message: "Slug must be a String",
+          code: "INVALID_SLUG",
+        });
+      }
 
-       const category = await Category.findById(id)
-       if(!category){
-         return res.status(400).json({
-            success : false ,
-            message : "Category not found",
-            code : "CATEGORY_NOT_FOUND"
-         })
-       }
+      req.body.slug = req.body.slug.trim().toLowerCase();
 
-       const allowedFields = ["category_name", "slug", "description", "image", "icon", "is_active", "is_featured", "sort_order", "commission_percentage"]
-       
-       const providedFields = Object.keys(req.body)
-       if(providedFields.length === 0){
+      const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+      if (!slugRegex.test(req.body.slug)) {
         return res.status(400).json({
-            success : false ,
-            message : "Please provide at least one field to update.",
-            code: "EMPTY_UPDATE",
-        })
-       }
+          success: false,
+          message: "please provide a vaid slug",
+          code: "INVAID_SLUG",
+        });
+      }
 
-       const invalidFields = providedFields.filter((field) => !allowedFields.includes(field))
-       if(invalidFields.length > 0 ){
+      const existingSlug = await Category.findOne({
+        slug: req.body.slug,
+        _id: { $ne: id },
+      });
+      if (existingSlug) {
         return res.status(400).json({
-            success : false ,
-            code : "INVALID_FIELDS",
-            message : "Some fields are not allowed to update.",
-            invalid_fields: invalidFields,
-        })
-       }
+          success: false,
+          message: "This category slug is already in use.",
+          code: "CATEGORY_SLUG_EXISTS",
+        });
+      }
+    }
 
-       if(Object.hasOwn(req.body, "slug")){
-        if(typeof req.body.slug !== "string"){
-            return res.status(400).json({
-                success : false ,
-                message : "Slug must be a String",
-                code : "INVALID_SLUG"
-            })
-        }
+    // Update only provided field
+    for (const field of allowedFields) {
+      if (Object.hasOwn(req.body, field)) {
+        category.set(field, req.body[field]);
+      }
+    }
 
-        req.body.slug = req.body.slug.trim().toLowerCase();
+    category.updated_by = adminId;
 
-        const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-        if(!slugRegex.test(req.body.slug)){
-            return res.status(400).json({
-                success : false ,
-                message : "please provide a vaid slug",
-                code : "INVAID_SLUG"
-            })
-        }
+    await category.save();
 
-        const existingSlug = await Category.findOne({
-            slug : req.body.slug,
-            _id : {$ne : id}
-        })
-        if(existingSlug){
-            return res.status(400).json({
-                success : false ,
-                message : "This category slug is already in use.",
-                code : "CATEGORY_SLUG_EXISTS"
-            })
-        }
-       }
-
-       // Update only provided field
-       for(const field of allowedFields){
-        if(Object.hasOwn(req.body, field)){
-            category.set(field, req.body[field])
-        }
-       }
-
-       category.updated_by = adminId
-
-       await category.save();
-
-       return res.status(200).json({
-        success : true,
-        message : "category updated successfully",
-        data : {
-            category
-        }
-       })
-
-    } catch (error) {
-        console.error("Update Category Error:", error.message);
+    return res.status(200).json({
+      success: true,
+      message: "category updated successfully",
+      data: {
+        category,
+      },
+    });
+  } catch (error) {
+    console.error("Update Category Error:", error.message);
 
     if (error.code === 11000) {
       return res.status(409).json({
@@ -378,5 +462,785 @@ export const updateCategory = async (req, res) => {
       code: "INTERNAL_SERVER_ERROR",
       message: "Unable to update category.",
     });
+  }
+};
+
+export const deleteCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user?.id;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "invalid Category id",
+        code: "INVALID_CATEGORY_ID",
+      });
     }
-}
+
+    const category = await Category.findById(id);
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Category not found ",
+        code: "CATEGORY_NOT_FOUND",
+      });
+    }
+
+    const existingServices = await Service.exists({ category_id: id });
+
+    if (existingServices) {
+      ((category.is_active = false), (category.update_by = adminId));
+
+      await category.save();
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Category has been deactivated because services are associated with it.",
+        code: "CATEGORY_DEACTIVATED",
+        data: {
+          category,
+          action: "SOFT_DELETE",
+        },
+      });
+    }
+
+    await Category.findByIdAndDelete(id);
+
+    return res.status(200).json({
+      success: true,
+      message: "category deleted successfully",
+      code: "CATEGORY_DELETED",
+      data: {
+        category_id: id,
+        action: "HARD_DELETE",
+      },
+    });
+  } catch (error) {
+    console.error("Delete Category Error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Unable to delete category.",
+    });
+  }
+};
+
+export const exportCategories = async (req, res) => {
+  try {
+    // STEP 1: Read and validate export format
+    const format = String(req.query?.format || "xlsx").toLowerCase();
+
+    const allowedFormats = ["xlsx", "csv", "pdf"];
+
+    if (!allowedFormats.includes(format)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid export format. Allowed formats: xlsx, csv, pdf.",
+      });
+    }
+
+    // STEP 2: Parse Boolean query parameters properly
+    const parseBoolean = (value) => {
+      if (value === undefined || value === null) {
+        return undefined;
+      }
+
+      // Convert value into string and remove accidental quotes/spaces
+      const normalizedValue = String(value)
+        .trim()
+        .replace(/^["']|["']$/g, "")
+        .toLowerCase();
+
+      if (normalizedValue === "true") return true;
+      if (normalizedValue === "false") return false;
+
+      return undefined;
+    };
+
+    // STEP 3: Validate Boolean query parameters
+    const isActive = parseBoolean(req.query.is_active);
+    const isFeatured = parseBoolean(req.query.is_featured);
+
+    if (req.query.is_active !== undefined && isActive === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "is_active must be either true or false.",
+      });
+    }
+
+    if (req.query.is_featured !== undefined && isFeatured === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "is_featured must be either true or false.",
+      });
+    }
+
+    // STEP 4: Build MongoDB filter
+    const filter = {};
+
+    if (isActive !== undefined) {
+      filter.is_active = isActive;
+    }
+
+    if (isFeatured !== undefined) {
+      filter.is_featured = isFeatured;
+    }
+
+    if (req.query.category_id) {
+      filter._id = req.query.category_id;
+    }
+
+    // STEP 5: Fetch categories
+    const categories = await Category.find(filter)
+      .sort({ sort_order: 1, createdAt: -1 })
+      .lean();
+
+    // STEP 6: Debug logs
+    // console.log("Export query params:", req.query);
+    // console.log("Parsed is_active:", isActive);
+    // console.log("Parsed is_featured:", isFeatured);
+    // console.log("MongoDB filter:", filter);
+    // console.log("Categories fetched:", categories.length);
+
+    console.log(
+      categories.map((category) => ({
+        name: category.category_name,
+        is_active: category.is_active,
+      })),
+    );
+
+    // STEP 7: Check if categories exist
+    if (!categories.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No categories found to export.",
+      });
+    }
+
+    // STEP 8: Create Excel workbook
+    const workbook = new Exceljs.Workbook();
+
+    workbook.creator = "Kaamdaar Admin";
+    workbook.created = new Date();
+
+    const worksheet = workbook.addWorksheet("Categories");
+
+    // STEP 9: Define Excel columns
+    worksheet.columns = [
+      { header: "Category ID", key: "category_id", width: 28 },
+      { header: "Category Name", key: "category_name", width: 25 },
+      { header: "Slug", key: "slug", width: 25 },
+      { header: "Description", key: "description", width: 40 },
+      { header: "Image URL", key: "image_url", width: 40 },
+      { header: "Icon", key: "icon", width: 20 },
+      { header: "Active", key: "is_active", width: 12 },
+      { header: "Featured", key: "is_featured", width: 12 },
+      { header: "Sort Order", key: "sort_order", width: 15 },
+      { header: "Commission %", key: "commission_percentage", width: 15 },
+      { header: "Created By", key: "created_by", width: 28 },
+      { header: "Updated By", key: "updated_by", width: 28 },
+      { header: "Created At", key: "createdAt", width: 25 },
+      { header: "Updated At", key: "updatedAt", width: 25 },
+    ];
+
+    // STEP 10: Add data to worksheet
+    categories.forEach((category) => {
+      worksheet.addRow({
+        category_id: category._id?.toString(),
+        category_name: category.category_name,
+        slug: category.slug,
+        description: category.description || "",
+        image_url: category.image?.url || "",
+        icon: category.icon || "",
+        is_active: category.is_active,
+        is_featured: category.is_featured,
+        sort_order: category.sort_order,
+        commission_percentage: category.commission_percentage,
+        created_by: category.created_by?.toString() || "",
+        updated_by: category.updated_by?.toString() || "",
+        createdAt: category.createdAt,
+        updatedAt: category.updatedAt,
+      });
+    });
+
+    // STEP 11: Style Excel header
+    const headerRow = worksheet.getRow(1);
+
+    headerRow.font = {
+      bold: true,
+      color: { argb: "FFFFFFFF" },
+    };
+
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF1F4E78" },
+    };
+
+    headerRow.alignment = {
+      vertical: "middle",
+      horizontal: "center",
+    };
+
+    headerRow.height = 25;
+
+    // STEP 12: Enable Excel filters
+    worksheet.autoFilter = {
+      from: "A1",
+      to: `N${categories.length + 1}`,
+    };
+
+    // STEP 13: Freeze header row
+    worksheet.views = [
+      {
+        state: "frozen",
+        ySplit: 1,
+      },
+    ];
+
+    // ==================================================
+    // STEP 14: XLSX EXPORT
+    // ==================================================
+    if (format === "xlsx") {
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="categories.xlsx"',
+      );
+
+      await workbook.xlsx.write(res);
+      return res.end();
+    }
+
+    // ==================================================
+    // STEP 15: CSV EXPORT
+    // ==================================================
+    if (format === "csv") {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="categories.csv"',
+      );
+
+      await workbook.csv.write(res);
+      return res.end();
+    }
+
+    // ==================================================
+    // STEP 16: PDF EXPORT
+    // ==================================================
+    if (format === "pdf") {
+      res.setHeader("Content-Type", "application/pdf");
+
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="categories.pdf"',
+      );
+
+      const doc = new PDFDocument({
+        size: "A4",
+        layout: "landscape",
+        margin: 30,
+      });
+
+      doc.pipe(res);
+
+      const headers = [
+        "Category",
+        "Slug",
+        "Active",
+        "Featured",
+        "Sort",
+        "Commission",
+      ];
+
+      const columnWidths = [180, 180, 60, 70, 50, 80];
+
+      const startX = 30;
+      const rowHeight = 25;
+
+      // Function to draw PDF table header
+      const drawTableHeader = (y) => {
+        let x = startX;
+
+        doc.font("Helvetica-Bold").fontSize(9);
+
+        headers.forEach((header, index) => {
+          doc.text(header, x, y, {
+            width: columnWidths[index],
+            height: rowHeight,
+          });
+
+          x += columnWidths[index];
+        });
+
+        return y + rowHeight;
+      };
+
+      // PDF title
+      doc.font("Helvetica-Bold").fontSize(18);
+
+      doc.text("Categories Export", {
+        align: "center",
+      });
+
+      doc.moveDown();
+
+      doc.font("Helvetica").fontSize(10);
+
+      doc.text(`Total Categories: ${categories.length}`);
+
+      doc.moveDown();
+
+      // Draw initial header
+      let currentY = doc.y;
+
+      currentY = drawTableHeader(currentY);
+
+      // Draw category rows
+      categories.forEach((category) => {
+        // Pagination
+        if (currentY > 520) {
+          doc.addPage({
+            size: "A4",
+            layout: "landscape",
+            margin: 30,
+          });
+
+          currentY = 30;
+
+          // Repeat header on new page
+          currentY = drawTableHeader(currentY);
+        }
+
+        const rowData = [
+          category.category_name || "",
+          category.slug || "",
+          category.is_active ? "Yes" : "No",
+          category.is_featured ? "Yes" : "No",
+          category.sort_order ?? 0,
+          `${category.commission_percentage ?? 0}%`,
+        ];
+
+        let currentX = startX;
+
+        doc.font("Helvetica").fontSize(8);
+
+        rowData.forEach((value, index) => {
+          doc.text(String(value), currentX, currentY, {
+            width: columnWidths[index],
+            height: rowHeight,
+            ellipsis: true,
+          });
+
+          currentX += columnWidths[index];
+        });
+
+        currentY += rowHeight;
+      });
+
+      doc.end();
+      return;
+    }
+  } catch (error) {
+    console.error("Export Categories Error:", error.message);
+
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch categories for export.",
+      });
+    }
+
+    return res.end();
+  }
+};
+
+// ==================================================
+// HELPERS
+// ==================================================
+
+const normalizeText = (value) => {
+  return String(value ?? "").trim();
+};
+
+const normalizeKey = (value) => {
+  return normalizeText(value).toLowerCase();
+};
+
+const parseBoolean = (value, defaultValue = true) => {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (["true", "1", "yes"].includes(normalized)) {
+    return true;
+  }
+
+  if (["false", "0", "no"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
+};
+
+const parseNumber = (value, defaultValue = 0) => {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : null;
+};
+
+const escapeRegex = (value) => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+// ==================================================
+// READ EXCEL FILE
+// ==================================================
+
+const readExcelFile = async (buffer) => {
+  const workbook = new ExcelJS.Workbook();
+
+  await workbook.xlsx.load(buffer);
+
+  const worksheet = workbook.worksheets[0];
+
+  if (!worksheet) {
+    throw new Error("Excel file does not contain a worksheet.");
+  }
+
+  const headers = [];
+
+  worksheet.getRow(1).eachCell((cell, colNumber) => {
+    headers[colNumber] = String(cell.value || "")
+      .trim()
+      .toLowerCase();
+  });
+
+  const rows = [];
+
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+
+    const rowData = {};
+
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const header = headers[colNumber];
+
+      if (header) {
+        rowData[header] = cell.value;
+      }
+    });
+
+    rows.push(rowData);
+  });
+
+  return rows;
+};
+
+// ==================================================
+// READ CSV FILE
+// ==================================================
+
+const readCsvFile = (buffer) => {
+  return parse(buffer, {
+    columns: (headers) =>
+      headers.map((header) => String(header).trim().toLowerCase()),
+    skip_empty_lines: true,
+    trim: true,
+    bom: true,
+  });
+};
+
+export const importCategories = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Please upload a CSV or Excel file.",
+      });
+    }
+
+    // ==============================================
+    // STEP 1: CHECK FILE TYPE
+    // ==============================================
+
+    const extension = req.file.originalname.split(".").pop().toLowerCase();
+
+    if (!["csv", "xlsx"].includes(extension)) {
+      return res.status(400).json({
+        success: false,
+        message: "Only CSV and XLSX files are allowed.",
+      });
+    }
+
+    // ==============================================
+    // STEP 3: READ FILE
+    // ==============================================
+
+    let rows;
+
+    if (extension === "csv") {
+      rows = readCsvFile(req.file.buffer);
+    } else {
+      rows = await readExcelFile(req.file.buffer);
+    }
+
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "The uploaded file is empty.",
+      });
+    }
+
+    if (rows.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 500 rows are allowed per import.",
+      });
+    }
+
+    // ==============================================
+    // STEP 4: VALIDATE ROWS
+    // ==============================================
+
+    const validRows = [];
+    const invalidCategories = [];
+    const duplicateCategories = [];
+
+    const fileNameSet = new Set();
+    const fileSlugSet = new Set();
+
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+
+      const categoryName = normalizeText(row.category_name);
+      const slug = normalizeText(row.slug);
+
+      const description = normalizeText(row.description);
+      const icon = normalizeText(row.icon);
+
+      const isActive = parseBoolean(row.is_active, true);
+      const isFeatured = parseBoolean(row.is_featured, false);
+
+      const sortOrder = parseNumber(row.sort_order, 0);
+
+      const commissionPercentage = parseNumber(row.commission_percentage, 0);
+
+      const errors = [];
+
+      // Required fields
+      if (!categoryName) {
+        errors.push("category_name is required.");
+      }
+
+      if (!slug) {
+        errors.push("slug is required.");
+      }
+
+      // Boolean validation
+      if (isActive === null) {
+        errors.push("is_active must be true or false.");
+      }
+
+      if (isFeatured === null) {
+        errors.push("is_featured must be true or false.");
+      }
+
+      // Number validation
+      if (sortOrder === null || sortOrder < 0) {
+        errors.push("sort_order must be a non-negative number.");
+      }
+
+      if (
+        commissionPercentage === null ||
+        commissionPercentage < 0 ||
+        commissionPercentage > 100
+      ) {
+        errors.push("commission_percentage must be between 0 and 100.");
+      }
+
+      // ==============================================
+      // CHECK DUPLICATES WITHIN UPLOADED FILE
+      // ==============================================
+
+      const normalizedName = normalizeKey(categoryName);
+      const normalizedSlug = normalizeKey(slug);
+
+      if (categoryName && fileNameSet.has(normalizedName)) {
+        errors.push("Duplicate category_name found in uploaded file.");
+      }
+
+      if (slug && fileSlugSet.has(normalizedSlug)) {
+        errors.push("Duplicate slug found in uploaded file.");
+      }
+
+      // Mark values as seen
+      if (categoryName) {
+        fileNameSet.add(normalizedName);
+      }
+
+      if (slug) {
+        fileSlugSet.add(normalizedSlug);
+      }
+
+      // ==============================================
+      // INVALID ROW
+      // ==============================================
+
+      if (errors.length > 0) {
+        invalidCategories.push({
+          row_number: index + 2,
+          category_name: categoryName,
+          slug,
+          errors,
+        });
+
+        continue;
+      }
+
+      // ==============================================
+      // PREPARE VALID CATEGORY
+      // ==============================================
+
+      validRows.push({
+        category_name: categoryName,
+        slug,
+        description,
+        icon,
+        is_active: isActive,
+        is_featured: isFeatured,
+        sort_order: sortOrder,
+        commission_percentage: commissionPercentage,
+        created_by: req.user.id,
+      });
+    }
+
+    // ==============================================
+    // STEP 5: CHECK MONGODB DUPLICATES
+    // ==============================================
+
+    const existingCategories = [];
+
+    if (validRows.length > 0) {
+      const nameRegexes = validRows.map((category) => ({
+        category_name: {
+          $regex: `^${escapeRegex(category.category_name)}$`,
+          $options: "i",
+        },
+      }));
+
+      const slugRegexes = validRows.map((category) => ({
+        slug: {
+          $regex: `^${escapeRegex(category.slug)}$`,
+          $options: "i",
+        },
+      }));
+
+      const existingCategoriesFromDB = await Category.find({
+        $or: [...nameRegexes, ...slugRegexes],
+      })
+        .select("category_name slug")
+        .lean();
+
+      existingCategories.push(...existingCategoriesFromDB);
+    }
+
+    // ==============================================
+    // STEP 6: IDENTIFY DUPLICATES
+    // ==============================================
+
+    const existingNameSet = new Set(
+      existingCategories.map((category) =>
+        normalizeKey(category.category_name),
+      ),
+    );
+
+    const existingSlugSet = new Set(
+      existingCategories.map((category) => normalizeKey(category.slug)),
+    );
+
+    const newCategories = [];
+
+    for (const category of validRows) {
+      const normalizedName = normalizeKey(category.category_name);
+
+      const normalizedSlug = normalizeKey(category.slug);
+
+      const nameExists = existingNameSet.has(normalizedName);
+      const slugExists = existingSlugSet.has(normalizedSlug);
+
+      if (nameExists || slugExists) {
+        duplicateCategories.push({
+          category_name: category.category_name,
+          slug: category.slug,
+          reason: [
+            ...(nameExists ? ["Category name already exists."] : []),
+            ...(slugExists ? ["Slug already exists."] : []),
+          ],
+        });
+
+        continue;
+      }
+
+      newCategories.push(category);
+
+      // Prevent duplicates within this import set
+      existingNameSet.add(normalizedName);
+      existingSlugSet.add(normalizedSlug);
+    }
+
+    // ==============================================
+    // STEP 7: INSERT NEW CATEGORIES
+    // ==============================================
+
+    let importedCategories = [];
+
+    if (newCategories.length > 0) {
+      importedCategories = await Category.insertMany(newCategories, {
+        ordered: false,
+      });
+    }
+
+    // ==============================================
+    // STEP 8: RETURN RESPONSE
+    // ==============================================
+
+    return res.status(200).json({
+      success: true,
+      message: "Category import completed successfully.",
+      data: {
+        total_rows: rows.length,
+        imported_count: importedCategories.length,
+        duplicate_count: duplicateCategories.length,
+        invalid_count: invalidCategories.length,
+        skipped_count: duplicateCategories.length + invalidCategories.length,
+        imported_categories: importedCategories,
+        duplicate_categories: duplicateCategories,
+        invalid_categories: invalidCategories,
+      },
+    });
+  } catch (error) {
+    console.error("Category import error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong while importing categories.",
+      error: error.message,
+    });
+  }
+};
