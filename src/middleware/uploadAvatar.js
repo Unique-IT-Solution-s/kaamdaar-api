@@ -91,3 +91,42 @@ const serviceImageUpload = multer({
 });
 
 export const uploadServiceImages = serviceImageUpload.array("images", 5);
+
+
+
+const importServiceFileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 1,
+  },
+  fileFilter: (req, file, callback) => {
+    const allowedMimeTypes = [
+      "text/csv",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/octet-stream",
+    ];
+
+    const extension = file.originalname
+      .split(".")
+      .pop()
+      .toLowerCase();
+
+    if (!["csv", "xlsx"].includes(extension)) {
+      return callback(
+        new Error("Only CSV and XLSX files are allowed.")
+      );
+    }
+
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      return callback(
+        new Error("Invalid file type. Only CSV and XLSX are allowed.")
+      );
+    }
+
+    callback(null, true);
+  },
+});
+
+export const uploadServiceImportFile = importServiceFileUpload.single("file");
