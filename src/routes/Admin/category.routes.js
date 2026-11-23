@@ -10,7 +10,7 @@ routes.get("/export", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), 
 routes.post("/import", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), uploadCategoryFile ,importCategories)
 
 routes.post("/", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), createCategory)
-routes.get("/", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), getCategories)
+routes.get("/", authenticateUser, authorizeRoles("ADMIN","SUPER_ADMIN"), getCategories)
 routes.get("/:id", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), getCategoryById)
 routes.put("/:id", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), updateCategory)
 routes.delete("/:id", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), deleteCategory)

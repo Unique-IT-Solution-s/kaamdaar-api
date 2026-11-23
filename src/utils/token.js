@@ -12,7 +12,7 @@ if (!ACCESS_TOKEN_SECRET) {
 
 const JWT_ISSUER = "kaamdaar-api";
 const JWT_AUDIENCE = "kaamdaar-app";
-const ACCESS_TOKEN_EXPIRY = "15m";
+const ACCESS_TOKEN_EXPIRY = "300m";
 
 // ==================================================
 // 1. GENERATE ACCESS TOKEN

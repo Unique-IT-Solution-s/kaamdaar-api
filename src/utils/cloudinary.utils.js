@@ -37,6 +37,8 @@ export const uploadImageToCloudinary = (
   });
 };
 
+// console.log("upload image to cloudinary", uploadImageToCloudinary.secure_url);
+
 
 
 export const deleteImageFromCloudinary = async (publicId) => {

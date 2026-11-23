@@ -16,6 +16,7 @@ import locationRoutes from "./src/routes/location.routes.js";
 import adminDashboardRoutes from "./src/routes/Admin/dashboard.routes.js";
 import adminCategoryRoutes from "./src/routes/Admin/category.routes.js";
 import adminServiceRoutes from "./src/routes/Admin/service.routes.js"
+import adminSubServiceRoutes from "./src/routes/Admin/subService.routes.js"
 
 import { socketAuthenticateUser } from "./src/middleware/socketAuth.middleware.js";
 
@@ -48,10 +49,12 @@ app.use("/api/v1/auth", customerAuthRoutes);
 app.use("/api/v1/admin/dashboard", adminDashboardRoutes);
 app.use("/api/v1/admin/categories", adminCategoryRoutes);
 app.use("/api/v1/admin/services", adminServiceRoutes)
+app.use("/api/v1/admin/subservices", adminSubServiceRoutes);
 
 app.use("/api/v1", authenticatedRoutes);
 app.use("/api/v1/customer", customerAddressRoutes);
 app.use("/api/v1/location", locationRoutes);
+
 
 const httpServer = createServer(app);
 

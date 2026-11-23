@@ -913,7 +913,7 @@ const escapeRegex = (value) => {
 // ==================================================
 
 const readExcelFile = async (buffer) => {
-  const workbook = new ExcelJS.Workbook();
+  const workbook = new Exceljs.Workbook();
 
   await workbook.xlsx.load(buffer);
 

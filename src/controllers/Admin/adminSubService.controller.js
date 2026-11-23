@@ -1,0 +1,461 @@
+import mongoose from "mongoose";
+import Service from "../../models/Service.js";
+import SubService from "../../models/SubService.js";
+import {
+  deleteImageFromCloudinary,
+  uploadImageToCloudinary,
+} from "../../utils/cloudinary.utils.js";
+
+export const createSubService = async (req, res) => {
+  let uploadImage = null;
+  try {
+    const adminId = req.user?.id;
+    if (!adminId || !mongoose.Types.ObjectId.isValid(adminId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Authentication is required",
+      });
+    }
+
+    const {
+      service_id,
+      subservice_name,
+      slug,
+      description,
+      is_active,
+      sort_order,
+    } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(service_id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid service id is requires",
+      });
+    }
+
+    const service = await Service.findById({
+      _id: service_id,
+      is_active: true,
+    }).select("_id, service_name");
+    if (!service) {
+      return res.status(404).json({
+        success: false,
+        message: "Active service not found",
+      });
+    }
+
+    const normalizedName = String(subservice_name || "").trim();
+    if (normalizedName.length < 2 || normalizedName.length > 150) {
+      return res.status(400).json({
+        success: false,
+        message: "Sub-service name must be between 2 and 150 characters.",
+      });
+    }
+
+    const normalizedSlug = String(slug || "")
+      .trim()
+      .toLowerCase();
+
+    const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+    if (normalizedSlug.length > 180 || !slugRegex.test(normalizedSlug)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid slug",
+      });
+    }
+
+    const normalizedDescription = String(description || "").trim();
+    if (!normalizedDescription.length > 2000) {
+      return res.status(400).json({
+        success: false,
+        message: "Description cannot exceed 2000 characters.",
+      });
+    }
+
+    const sortOrder =
+      sort_order === undefined || sort_order === "" ? 0 : Number(sort_order);
+
+    if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 180) {
+      return res.status(400).json({
+        success: false,
+        message: "sort_order must be an integer between 0 and 10000.",
+      });
+    }
+
+    let isActive = true;
+    if (is_active !== undefined) {
+      if (typeof is_active === "boolean") {
+        isActive = is_active;
+      } else if (["true", "1"].includes(String(is_active).toLowerCase())) {
+        isActive = true;
+      } else if (["false", "0"].includes(String(is_active).toLowerCase())) {
+        isActive = false;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "is_active must be true or false.",
+        });
+      }
+    }
+
+    const existingName = await SubService.findOne({
+      service_id,
+      sunservice_name: {
+        $regex: `^${normalizedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+        $options: "i",
+      },
+    }).select("_id");
+    if (existingName) {
+      return res.status(409).json({
+        success: false,
+        message: "Subservice name already exists under this service ",
+      });
+    }
+
+    const existingSlug = await SubService.findOne({
+      service_id,
+      slug: normalizedSlug,
+    }).select("_id");
+    if (existingSlug) {
+      return res.status(409).json({
+        success: false,
+        message: "slug already exists under this service ",
+      });
+    }
+
+    let image = {};
+    if (req.file) {
+      uploadImage = await uploadImageToCloudinary(
+        req.file.buffer,
+        "kaamdaar/subservices",
+      );
+
+      image = {
+        url: uploadImage.url,
+        public_id: uploadImage.public_id,
+      };
+    }
+
+    const subService = await SubService.create({
+      service_id,
+      subservice_name: normalizedName,
+      slug: normalizedSlug,
+      description: normalizedDescription || null,
+      image,
+      is_active: isActive,
+      sort_order: sortOrder,
+      created_by: adminId,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Sub-service is created successfully",
+      data: subService,
+    });
+  } catch (error) {
+    if (uploadImage?.public_id) {
+      try {
+        await deleteImageFromCloudinary(uploadedImage.public_id);
+      } catch (cleanupError) {
+        console.error("Cloudinary cleanup failed:", cleanupError.message);
+      }
+    }
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Sub-service slug already exists under this service.",
+      });
+    }
+
+    console.error("Create SubService Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+    });
+  }
+};
+
+export const getAllSubServices = async (req, res) => {
+  console.log("GET ALL SUBSERVICES CONTROLLER CALLED");
+  console.log("Query Params:", req.query);
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      service_id,
+      is_active,
+      sortBy = "sort_order",
+      sortOrder = "asc",
+    } = req.query;
+
+    const currentPage = Number(page);
+    const pageLimit = Number(limit);
+    if (
+      currentPage < 1 ||
+      !Number.isInteger(currentPage) ||
+      !Number.isInteger(pageLimit) ||
+      pageLimit < 1 ||
+      pageLimit > 100
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid pagination parameters.",
+      });
+    }
+
+    const skip = (currentPage - 1) * pageLimit;
+
+    if (service_id && !mongoose.Types.ObjectId.isValid(service_id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Service id",
+      });
+    }
+
+    let activefilter;
+
+    if (is_active !== undefined) {
+      const value = String(is_active).trim().toLowerCase();
+      if (value === "true" || value === "1") {
+        activefilter = true;
+      } else if (value === "false" || value === "0") {
+        activefilter = false;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "is_active must be true or false",
+        });
+      }
+    }
+
+    const filter = {};
+
+    if (service_id) {
+      filter.service_id = new mongoose.Types.ObjectId(service_id);
+    }
+    if (activefilter !== undefined) {
+      filter.is_active = activefilter;
+    }
+    if (search && String(search).trim()) {
+      const escapedSearch = String(search)
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      filter.$or = [
+        {
+          subservice_name: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+        {
+          slug: {
+            $regex: escapedSearch,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    const allowedSortFields = [
+      "subservice_name",
+      "createdAt",
+      "updatedAt",
+      "sort_order",
+    ];
+
+    if (!allowedSortFields.includes(sortBy)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid sortBy field.",
+      });
+    }
+    if (!["asc", "desc"].includes(String(sortOrder).toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        message: "sortOrder must be asc or desc.",
+      });
+    }
+
+    const sort = {
+      [sortBy]: sortOrder.toLowerCase() === "asc" ? 1 : -1,
+      _id: 1,
+    };
+
+    const result = await SubService.aggregate([
+      {
+        $match: filter,
+      },
+      {
+        $sort: sort,
+      },
+      {
+        $facet: {
+          metadata: [
+            {
+              $count: "total",
+            },
+          ],
+          data: [
+            {
+              $skip: skip,
+            },
+            {
+              $limit: pageLimit,
+            },
+            {
+              $lookup: {
+                from: "services",
+                localField: "service_id",
+                foreignField: "_id",
+                as: "service",
+              },
+            },
+            {
+              $unwind: {
+                path: "$service",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            {
+              $project: {
+                service_id: 1,
+                subservice_name: 1,
+                slug: 1,
+                description: 1,
+                image: 1,
+                is_active: 1,
+                sort_order: 1,
+                created_by: 1,
+                updated_by: 1,
+                createdAt: 1,
+                updatedAt: 1,
+
+                service: {
+                  _id: "$service._id",
+                  service_name: "$service.service_name",
+                  slug: "$service.slug",
+                },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    const subServices = result[0]?.data || [];
+
+    const totalSubServices = result[0]?.metadata?.[0]?.total || 0;
+
+    const totalPages = Math.ceil(totalSubServices / pageLimit);
+
+    return res.status(200).json({
+      success: true,
+      message: "Sub-services fetched successfully.",
+      pagination: {
+        totalSubServices,
+        currentPage,
+        pageLimit,
+        totalPages,
+        hasNextPage: currentPage < totalPages,
+        hasPreviousPage: currentPage > 1,
+      },
+      data: subServices,
+    });
+  } catch (error) {
+    console.error("Get All SubServices Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+    });
+  }
+};
+
+export const getSubServiceById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "InValid sub service Id",
+      });
+    }
+
+    const adminId = req.user?.id;
+    if (!adminId || !mongoose.Types.ObjectId.isValid(adminId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    const subService = await SubService.aggregate([
+      {
+        $match: {
+          _id: new mongoose.Types.ObjectId(id),
+        },
+      },
+      {
+        $lookup: {
+          from: "servies",
+          localField: "service_id",
+          foreignField: "_id",
+          as: "service",
+        },
+      },
+      {
+        $unwind: {
+          path: "$service",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $project: {
+          service_id: 1,
+          subservice_name: 1,
+          slug: 1,
+          description: 1,
+          image: 1,
+          is_active: 1,
+          sort_order: 1,
+          created_by: 1,
+          updated_by: 1,
+          createdAt: 1,
+          updatedAt: 1,
+
+          service: {
+            _id: "$service._id",
+            service_name: "$service.service_name",
+            slug: "$service.slug",
+            category_id: "$service.category_id",
+          },
+        },
+      },
+    ]);
+
+    console.log("sub services", subService);
+
+    if (!subService.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Sub services not found",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      message: "SubService fetched successfully.",
+      data: subService[0],
+    });
+  } catch (error) {
+    console.error("Get SubService By ID Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+    });
+  }
+};

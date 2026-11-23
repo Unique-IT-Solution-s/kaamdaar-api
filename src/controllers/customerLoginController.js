@@ -99,7 +99,7 @@ export const loginCustomer = async (req, res) => {
         sessionId: userSession._id.toString(),
       },
       accessSecret,
-      { expiresIn: "15m" }
+      { expiresIn: "4h" }
     );
 
     // Keep the refresh credential out of the JSON response.
