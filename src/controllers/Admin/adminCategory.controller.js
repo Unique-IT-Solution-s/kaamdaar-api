@@ -530,25 +530,24 @@ export const deleteCategory = async (req, res) => {
 
 export const exportCategories = async (req, res) => {
   try {
-    // STEP 1: Read and validate export format
-    const format = String(req.query?.format || "xlsx").toLowerCase();
+    // STEP 1: Validate export format
+    const format = String(req.query?.format || "xlsx")
+      .trim()
+      .toLowerCase();
 
-    const allowedFormats = ["xlsx", "csv", "pdf"];
-
-    if (!allowedFormats.includes(format)) {
+    if (!["xlsx", "csv", "pdf"].includes(format)) {
       return res.status(400).json({
         success: false,
         message: "Invalid export format. Allowed formats: xlsx, csv, pdf.",
       });
     }
 
-    // STEP 2: Parse Boolean query parameters properly
+    // STEP 2: Parse active filter
     const parseBoolean = (value) => {
       if (value === undefined || value === null) {
         return undefined;
       }
 
-      // Convert value into string and remove accidental quotes/spaces
       const normalizedValue = String(value)
         .trim()
         .replace(/^["']|["']$/g, "")
@@ -560,9 +559,7 @@ export const exportCategories = async (req, res) => {
       return undefined;
     };
 
-    // STEP 3: Validate Boolean query parameters
     const isActive = parseBoolean(req.query.is_active);
-    const isFeatured = parseBoolean(req.query.is_featured);
 
     if (req.query.is_active !== undefined && isActive === undefined) {
       return res.status(400).json({
@@ -571,48 +568,30 @@ export const exportCategories = async (req, res) => {
       });
     }
 
-    if (req.query.is_featured !== undefined && isFeatured === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: "is_featured must be either true or false.",
-      });
-    }
-
-    // STEP 4: Build MongoDB filter
+    // STEP 3: Build MongoDB filter
     const filter = {};
 
     if (isActive !== undefined) {
       filter.is_active = isActive;
     }
 
-    if (isFeatured !== undefined) {
-      filter.is_featured = isFeatured;
-    }
-
     if (req.query.category_id) {
-      filter._id = req.query.category_id;
+      if (!mongoose.Types.ObjectId.isValid(req.query.category_id)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid category_id.",
+        });
+      }
+
+      filter._id = new mongoose.Types.ObjectId(req.query.category_id);
     }
 
-    // STEP 5: Fetch categories
+    // STEP 4: Fetch categories
     const categories = await Category.find(filter)
+      .select("category_name slug description is_active")
       .sort({ sort_order: 1, createdAt: -1 })
       .lean();
 
-    // STEP 6: Debug logs
-    // console.log("Export query params:", req.query);
-    // console.log("Parsed is_active:", isActive);
-    // console.log("Parsed is_featured:", isFeatured);
-    // console.log("MongoDB filter:", filter);
-    // console.log("Categories fetched:", categories.length);
-
-    console.log(
-      categories.map((category) => ({
-        name: category.category_name,
-        is_active: category.is_active,
-      })),
-    );
-
-    // STEP 7: Check if categories exist
     if (!categories.length) {
       return res.status(404).json({
         success: false,
@@ -620,7 +599,7 @@ export const exportCategories = async (req, res) => {
       });
     }
 
-    // STEP 8: Create Excel workbook
+    // STEP 5: Create workbook
     const workbook = new Exceljs.Workbook();
 
     workbook.creator = "Kaamdaar Admin";
@@ -628,45 +607,25 @@ export const exportCategories = async (req, res) => {
 
     const worksheet = workbook.addWorksheet("Categories");
 
-    // STEP 9: Define Excel columns
+    // STEP 6: Define only four export columns
     worksheet.columns = [
-      { header: "Category ID", key: "category_id", width: 28 },
       { header: "Category Name", key: "category_name", width: 25 },
-      { header: "Slug", key: "slug", width: 25 },
-      { header: "Description", key: "description", width: 40 },
-      { header: "Image URL", key: "image_url", width: 40 },
-      { header: "Icon", key: "icon", width: 20 },
-      { header: "Active", key: "is_active", width: 12 },
-      { header: "Featured", key: "is_featured", width: 12 },
-      { header: "Sort Order", key: "sort_order", width: 15 },
-      { header: "Commission %", key: "commission_percentage", width: 15 },
-      { header: "Created By", key: "created_by", width: 28 },
-      { header: "Updated By", key: "updated_by", width: 28 },
-      { header: "Created At", key: "createdAt", width: 25 },
-      { header: "Updated At", key: "updatedAt", width: 25 },
+      { header: "Slug", key: "slug", width: 25, }, 
+      { header: "Description", key: "description", width: 45,},
+      { header: "Active", key: "is_active", width: 15,},
     ];
 
-    // STEP 10: Add data to worksheet
+    // STEP 7: Add category data
     categories.forEach((category) => {
       worksheet.addRow({
-        category_id: category._id?.toString(),
-        category_name: category.category_name,
-        slug: category.slug,
+        category_name: category.category_name || "",
+        slug: category.slug || "",
         description: category.description || "",
-        image_url: category.image?.url || "",
-        icon: category.icon || "",
         is_active: category.is_active,
-        is_featured: category.is_featured,
-        sort_order: category.sort_order,
-        commission_percentage: category.commission_percentage,
-        created_by: category.created_by?.toString() || "",
-        updated_by: category.updated_by?.toString() || "",
-        createdAt: category.createdAt,
-        updatedAt: category.updatedAt,
       });
     });
 
-    // STEP 11: Style Excel header
+    // STEP 8: Style Excel header
     const headerRow = worksheet.getRow(1);
 
     headerRow.font = {
@@ -687,13 +646,12 @@ export const exportCategories = async (req, res) => {
 
     headerRow.height = 25;
 
-    // STEP 12: Enable Excel filters
+    // STEP 9: Enable filters and freeze header
     worksheet.autoFilter = {
       from: "A1",
-      to: `N${categories.length + 1}`,
+      to: "D1",
     };
 
-    // STEP 13: Freeze header row
     worksheet.views = [
       {
         state: "frozen",
@@ -701,9 +659,7 @@ export const exportCategories = async (req, res) => {
       },
     ];
 
-    // ==================================================
-    // STEP 14: XLSX EXPORT
-    // ==================================================
+    // STEP 10: XLSX EXPORT
     if (format === "xlsx") {
       res.setHeader(
         "Content-Type",
@@ -719,9 +675,7 @@ export const exportCategories = async (req, res) => {
       return res.end();
     }
 
-    // ==================================================
-    // STEP 15: CSV EXPORT
-    // ==================================================
+    // STEP 11: CSV EXPORT
     if (format === "csv") {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
 
@@ -734,9 +688,7 @@ export const exportCategories = async (req, res) => {
       return res.end();
     }
 
-    // ==================================================
-    // STEP 16: PDF EXPORT
-    // ==================================================
+    // STEP 12: PDF EXPORT
     if (format === "pdf") {
       res.setHeader("Content-Type", "application/pdf");
 
@@ -748,26 +700,19 @@ export const exportCategories = async (req, res) => {
       const doc = new PDFDocument({
         size: "A4",
         layout: "landscape",
-        margin: 30,
+        margin: 35,
       });
 
       doc.pipe(res);
 
-      const headers = [
-        "Category",
-        "Slug",
-        "Active",
-        "Featured",
-        "Sort",
-        "Commission",
-      ];
+      const headers = ["Category Name", "Slug", "Description", "Active"];
 
-      const columnWidths = [180, 180, 60, 70, 50, 80];
+      const columnWidths = [150, 150, 350, 80];
 
-      const startX = 30;
-      const rowHeight = 25;
+      const startX = 35;
+      const rowHeight = 30;
 
-      // Function to draw PDF table header
+      // Draw PDF table header
       const drawTableHeader = (y) => {
         let x = startX;
 
@@ -800,34 +745,25 @@ export const exportCategories = async (req, res) => {
 
       doc.moveDown();
 
-      // Draw initial header
-      let currentY = doc.y;
-
-      currentY = drawTableHeader(currentY);
+      let currentY = drawTableHeader(doc.y);
 
       // Draw category rows
       categories.forEach((category) => {
-        // Pagination
         if (currentY > 520) {
           doc.addPage({
             size: "A4",
             layout: "landscape",
-            margin: 30,
+            margin: 35,
           });
 
-          currentY = 30;
-
-          // Repeat header on new page
-          currentY = drawTableHeader(currentY);
+          currentY = drawTableHeader(35);
         }
 
         const rowData = [
           category.category_name || "",
           category.slug || "",
+          category.description || "",
           category.is_active ? "Yes" : "No",
-          category.is_featured ? "Yes" : "No",
-          category.sort_order ?? 0,
-          `${category.commission_percentage ?? 0}%`,
         ];
 
         let currentX = startX;
@@ -851,12 +787,12 @@ export const exportCategories = async (req, res) => {
       return;
     }
   } catch (error) {
-    console.error("Export Categories Error:", error.message);
+    console.error("Export Categories Error:", error);
 
     if (!res.headersSent) {
       return res.status(500).json({
         success: false,
-        message: "Failed to fetch categories for export.",
+        message: "Failed to export categories.",
       });
     }
 
@@ -1241,6 +1177,118 @@ export const importCategories = async (req, res) => {
       success: false,
       message: "Something went wrong while importing categories.",
       error: error.message,
+    });
+  }
+};
+
+export const downloadCategoryImportTemplate = async (req, res) => {
+  try {
+    // STEP 1: Get requested format
+    const format = String(req.query.format || "xlsx")
+      .trim()
+      .toLowerCase();
+
+    // STEP 2: Validate format
+    if (!["xlsx", "csv"].includes(format)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid format. Supported formats are xlsx and csv.",
+      });
+    }
+
+    // STEP 3: Define template columns
+    const columns = [
+      "category_name",
+      "slug",
+      "description",
+      "is_active",
+      "is_featured",
+      "sort_order",
+    ];
+
+    // STEP 4: Generate CSV template
+    if (format === "csv") {
+      const csvContent = columns.join(",") + "\n";
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="Category_Import_Template.csv"',
+      );
+
+      return res.status(200).send(csvContent);
+    }
+
+    // STEP 5: Generate Excel template
+    const workbook = new Exceljs.Workbook();
+
+    const worksheet = workbook.addWorksheet("Categories");
+
+    worksheet.columns = [
+      { header: "category_name", key: "category_name", width: 25 },
+      { header: "slug", key: "slug", width: 25 },
+      { header: "description", key: "description", width: 40 },
+      { header: "is_active", key: "is_active", width: 15 },
+      { header: "is_featured", key: "is_featured", width: 15 },
+      { header: "sort_order", key: "sort_order", width: 15 },
+    ];
+
+    // STEP 6: Style header row
+    const headerRow = worksheet.getRow(1);
+
+    headerRow.font = {
+      bold: true,
+      color: { argb: "FFFFFFFF" },
+    };
+
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF1F4E78" },
+    };
+
+    headerRow.alignment = {
+      vertical: "middle",
+      horizontal: "center",
+    };
+
+    headerRow.height = 25;
+
+    // STEP 7: Add filter and freeze header
+    worksheet.autoFilter = {
+      from: "A1",
+      to: "F1",
+    };
+
+    worksheet.views = [
+      {
+        state: "frozen",
+        ySplit: 1,
+      },
+    ];
+
+    // STEP 8: Generate Excel buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    // STEP 9: Send downloadable file
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="Category_Import_Template.xlsx"',
+    );
+
+    return res.status(200).send(Buffer.from(buffer));
+  } catch (error) {
+    console.error("Download Category Template Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to download category import template.",
     });
   }
 };

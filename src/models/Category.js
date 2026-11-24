@@ -111,7 +111,7 @@ const categorySchema = new mongoose.Schema(
       required: true,
       min: 0,
       max: 100,
-      default: 20,
+      default: 10,
       validate: {
         validator: Number.isFinite,
         message: "Commission percentage must be a valid number.",

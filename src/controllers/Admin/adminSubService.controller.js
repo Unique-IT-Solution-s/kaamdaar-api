@@ -401,7 +401,7 @@ export const getSubServiceById = async (req, res) => {
       },
       {
         $lookup: {
-          from: "servies",
+          from: "services",
           localField: "service_id",
           foreignField: "_id",
           as: "service",
@@ -459,3 +459,354 @@ export const getSubServiceById = async (req, res) => {
     });
   }
 };
+
+export const updateSubService = async (req, res) => {
+    let uploadedImage = null;
+  try {
+    const { id } = req.params;
+    const adminId = req.user?.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid SubService ID.",
+      });
+    }
+
+    if (!adminId || !mongoose.Types.ObjectId.isValid(adminId)) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+    }
+
+    const subService = await SubService.findById(id);
+    if (!subService) {
+      return res.status(404).json({
+        success: false,
+        message: "Subservice not found",
+      });
+    }
+
+    const serviceId = req.body.service_id ?? subService.service_id;
+    if (!mongoose.Types.ObjectId.isValid(serviceId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Service ID",
+      });
+    }
+
+    const service = await Service.findOne({
+      _id: serviceId,
+      is_active: true,
+    }).select("_id");
+
+    if (!service) {
+      return res.status(404).json({
+        success: false,
+        message: "Active parent Service not found.",
+      });
+    }
+
+    let subserviceName = subService.subservice_name;
+
+    if (req.body.subservice_name !== undefined) {
+      subserviceName = String(req.body.subservice_name).trim();
+
+      if (subserviceName.length < 2 || subserviceName.length > 150) {
+        return res.status(400).json({
+          success: false,
+          message: "Sub-service name must be between 2 and 150 characters.",
+        });
+      }
+    }
+
+    let slug = subService.slug;
+
+    if (req.body?.slug !== undefined) {
+      slug = String(req.body?.slug).trim().toLowerCase();
+
+      const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+      if (!slugRegex.test(slug) || slug.length > 180) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide a valid slug.",
+        });
+      }
+    }
+
+    let description = subService.description;
+
+    if (req.body.description !== undefined) {
+      description = String(req.body.description).trim();
+
+      if (description.length > 2000) {
+        return res.status(400).json({
+          success: false,
+          message: "Description cannot exceed 2000 characters.",
+        });
+      }
+
+      description = description || null;
+    }
+
+    let isActive = subService.is_active;
+
+    if (req.body.is_active !== undefined) {
+      const value = String(req.body.is_active).trim().toLowerCase();
+
+      if (value === "true" || value === "1") {
+        isActive = true;
+      } else if (value === "false" || value === "0") {
+        isActive = false;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "is_active must be true or false.",
+        });
+      }
+    }
+
+    let sortOrder = subService.sort_order;
+
+    if (req.body.sort_order !== undefined) {
+      sortOrder = Number(req.body.sort_order);
+
+      if (
+        !Number.isInteger(sortOrder) ||
+        sortOrder < 0 ||
+        sortOrder > 10000
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "sort_order must be an integer between 0 and 10000.",
+        });
+      }
+    }
+
+    const escapedName = subserviceName.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+    const existingName = await SubService.findOne({
+      _id: { $ne: subService._id },
+      service_id: serviceId,
+      subservice_name: {
+        $regex: `^${escapedName}$`,
+        $options: "i",
+      },
+    }).select("_id");
+
+    if (existingName) {
+      return res.status(409).json({
+        success: false,
+        message: "Sub-service name already exists under this service.",
+      });
+    }
+
+    const existingSlug = await SubService.findOne({
+      _id: { $ne: subService._id },
+      service_id: serviceId,
+      slug,
+    }).select("_id");
+
+    if (existingSlug) {
+      return res.status(409).json({
+        success: false,
+        message: "Slug already exists under this service.",
+      });
+    }
+
+
+    let removeImage = false;
+
+    if (req.body.remove_image !== undefined) {
+      const value = String(req.body.remove_image).trim().toLowerCase();
+
+      if (value === "true" || value === "1") {
+        removeImage = true;
+      } else if (value !== "false" && value !== "0") {
+        return res.status(400).json({
+          success: false,
+          message: "remove_image must be true or false.",
+        });
+      }
+    }
+
+    if (req.file && removeImage) {
+      return res.status(400).json({
+        success: false,
+        message: "Upload a new image or remove the existing image, not both.",
+      });
+    }
+
+    const oldImagePublicId = subService.image?.public_id || null;
+
+    // STEP 13: Upload replacement image if provided
+    if (req.file) {
+      uploadedImage = await uploadImageToCloudinary(
+        req.file.buffer,
+        "kaamdaar/subservices"
+      );
+
+      const imageUrl = uploadedImage.secure_url || uploadedImage.url;
+
+      if (!imageUrl || !uploadedImage.public_id) {
+        throw new Error("Cloudinary did not return valid image details.");
+      }
+
+      subService.image = {
+        url: imageUrl,
+        public_id: uploadedImage.public_id,
+      };
+    } else if (removeImage) {
+      subService.image = {
+        url: null,
+        public_id: null,
+      };
+    }
+
+    subService.service_id = serviceId;
+    subService.subservice_name = subserviceName;
+    subService.slug = slug;
+    subService.description = description;
+    subService.is_active = isActive;
+    subService.sort_order = sortOrder;
+    subService.updated_by = adminId;
+
+    // STEP 15: Save database changes
+    await subService.save();
+
+    // STEP 16: Delete old image only after successful DB update
+    const imageWasReplacedOrRemoved =
+      Boolean(oldImagePublicId) &&
+      (Boolean(req.file) || removeImage);
+
+    if (
+      imageWasReplacedOrRemoved &&
+      oldImagePublicId &&
+      oldImagePublicId !== uploadedImage?.public_id
+    ) {
+      try {
+        await deleteImageFromCloudinary(oldImagePublicId);
+      } catch (cleanupError) {
+        console.error(
+          "Old SubService image cleanup failed:",
+          cleanupError.message
+        );
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "SubService updated successfully.",
+      data: subService,
+    });
+  } catch (error) {
+    if (uploadedImage?.public_id) {
+      try {
+        await deleteImageFromCloudinary(uploadedImage.public_id);
+      } catch (cleanupError) {
+        console.error(
+          "New SubService image cleanup failed:",
+          cleanupError.message,
+        );
+      }
+    }
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "SubService slug already exists under this service.",
+      });
+    }
+
+    console.error("Update SubService Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+    });
+  }
+};
+
+
+
+export const deleteSubService = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user?.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid SubService ID.",
+      });
+    }
+
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+    }
+
+    const subService = await SubService.findById(id);
+
+    if (!subService) {
+      return res.status(404).json({
+        success: false,
+        message: "SubService not found.",
+      });
+    }
+
+    // STEP 1: Get Cloudinary public_id
+    const imagePublicId = subService.image?.public_id || null;
+
+    // STEP 2: Hard Delete from MongoDB
+    await SubService.deleteOne({ _id: subService._id });
+
+    // STEP 3: Delete Image from Cloudinary
+    let cloudinaryDeleted = null;
+
+    if (imagePublicId) {
+      try {
+        const result = await deleteImageFromCloudinary(imagePublicId);
+
+        cloudinaryDeleted = result?.result === "ok" ||
+          result?.result === "not found";
+      } catch (cloudinaryError) {
+        console.error(
+          "Cloudinary SubService image deletion failed:",
+          cloudinaryError
+        );
+
+        cloudinaryDeleted = false;
+      }
+    }
+
+    // STEP 4: Send Response
+    return res.status(200).json({
+      success: true,
+      message: "SubService permanently deleted from database.",
+      data: {
+        _id: subService._id,
+        subservice_name: subService.subservice_name,
+        image_public_id: imagePublicId,
+        database_deleted: true,
+        cloudinary_deleted: cloudinaryDeleted,
+      },
+    });
+
+  } catch (error) {
+    console.error("Delete SubService Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error.",
+    });
+  }
+};
+
