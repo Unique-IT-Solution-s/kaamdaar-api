@@ -2,9 +2,11 @@ import express from "express"
 import { authenticateUser } from "../../middleware/authmiddleware.js";
 import { authorizeRoles } from "../../middleware/authorizeRoles.js";
 import { uploadSubServiceImage } from "../../middleware/uploadAvatar.js";
-import { createSubService, deleteSubService, getAllSubServices, getSubServiceById, updateSubService } from "../../controllers/Admin/adminSubService.controller.js";
+import { createSubService, deleteSubService, exportSubServices, getAllSubServices, getSubServiceById, updateSubService } from "../../controllers/Admin/adminSubService.controller.js";
 
 const routes = express.Router();
+
+routes.get("/export", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), exportSubServices)
 
 routes.post("/", authenticateUser, authorizeRoles("ADMIN", "SUPER_ADMIN"), uploadSubServiceImage, createSubService);
 routes.get("/getAllSubServices", authenticateUser, authorizeRoles("CUSTOMER", "ADMIN", "SUPER_ADMIN"), getAllSubServices);

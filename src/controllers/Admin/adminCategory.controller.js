@@ -99,22 +99,35 @@ export const createCategory = async (req, res) => {
 
 export const getCategories = async (req, res) => {
   try {
+    // ============================================
+    // STEP 1: PAGINATION
+    // ============================================
+
     const page = Number(req.query?.page ?? 1);
-    const limit = Number(req.query?.limit ?? 10);
+
+    const limit =
+      req.query?.limit !== undefined ? Number(req.query.limit) : null;
 
     if (!Number.isSafeInteger(page) || page < 1) {
       return res.status(400).json({
         success: false,
-        message: "page must be a poitive number",
+        message: "page must be a positive number.",
       });
     }
 
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    if (
+      limit !== null &&
+      (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+    ) {
       return res.status(400).json({
         success: false,
-        message: "limit must be between i to 100",
+        message: "limit must be between 1 and 100.",
       });
     }
+
+    // ============================================
+    // STEP 2: SEARCH VALIDATION
+    // ============================================
 
     const search =
       typeof req.query.search === "string" ? req.query.search.trim() : "";
@@ -129,34 +142,48 @@ export const getCategories = async (req, res) => {
       });
     }
 
+    // ============================================
+    // STEP 3: BUILD FILTER
+    // ============================================
+
     const filter = {};
+
     if (search) {
       const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
       filter.category_name = {
         $regex: escapedSearch,
-        $option: "i",
+        $options: "i",
       };
     }
 
+    // Active filter
     if (req.query.is_active !== undefined) {
       if (!["true", "false"].includes(req.query.is_active)) {
         return res.status(400).json({
           success: false,
-          message: "is_active must be true or false",
+          message: "is_active must be true or false.",
         });
       }
+
       filter.is_active = req.query.is_active === "true";
     }
 
+    // Featured filter
     if (req.query.is_featured !== undefined) {
       if (!["true", "false"].includes(req.query.is_featured)) {
         return res.status(400).json({
           success: false,
-          message: "is_featured must be true or false",
+          message: "is_featured must be true or false.",
         });
       }
+
       filter.is_featured = req.query.is_featured === "true";
     }
+
+    // ============================================
+    // STEP 4: SORT VALIDATION
+    // ============================================
 
     const allowedSortFields = [
       "category_name",
@@ -171,7 +198,7 @@ export const getCategories = async (req, res) => {
     if (!allowedSortFields.includes(sort_by)) {
       return res.status(400).json({
         success: false,
-        message: "Invaid sort by field",
+        message: "Invalid sort_by field.",
       });
     }
 
@@ -182,18 +209,28 @@ export const getCategories = async (req, res) => {
       });
     }
 
-    const skip = Number(page - 1) * Number(limit);
+    // ============================================
+    // STEP 5: BUILD SORT AND PAGINATION
+    // ============================================
 
-    // Build sorting
     const sort = {
       [sort_by]: sortOrder === "asc" ? 1 : -1,
       _id: 1,
     };
 
-    //. Fetch categories and count
+    const skip = limit !== null ? (page - 1) * limit : 0;
+
+    // Apply pagination only when limit is provided
+    const paginationStages =
+      limit !== null ? [{ $skip: skip }, { $limit: limit }] : [];
+
+    // ============================================
+    // STEP 6: FETCH CATEGORIES AND COUNTS
+    // ============================================
+
     const [categories, totalCategories] = await Promise.all([
       Category.aggregate([
-        // STEP 1: Apply category filters
+        // STEP 1: Apply filters
         {
           $match: filter,
         },
@@ -203,15 +240,10 @@ export const getCategories = async (req, res) => {
           $sort: sort,
         },
 
-        // STEP 3: Pagination
-        {
-          $skip: skip,
-        },
-        {
-          $limit: limit,
-        },
+        // STEP 3: Optional pagination
+        ...paginationStages,
 
-        // STEP 4: Find services belonging to each category
+        // STEP 4: Find related services
         {
           $lookup: {
             from: Service.collection.name,
@@ -227,7 +259,7 @@ export const getCategories = async (req, res) => {
                 },
               },
 
-              // STEP 5: Calculate total and active services
+              // STEP 5: Calculate service counts
               {
                 $group: {
                   _id: null,
@@ -248,7 +280,7 @@ export const getCategories = async (req, res) => {
           },
         },
 
-        // STEP 6: Add counts to category
+        // STEP 6: Add service counts
         {
           $addFields: {
             services_count: {
@@ -270,14 +302,21 @@ export const getCategories = async (req, res) => {
         },
       ]),
 
+      // Total matching categories before pagination
       Category.countDocuments(filter),
     ]);
 
-    const totalPages = Math.ceil(totalCategories / limit);
+    // ============================================
+    // STEP 7: PAGINATION DETAILS
+    // ============================================
+
+    const totalPages =
+      limit !== null
+        ? Math.ceil(totalCategories / limit) : totalCategories > 0 ? 1 : 0;
 
     return res.status(200).json({
       success: true,
-      message: "Category fetch successfully",
+      message: "Categories fetched successfully.",
       data: {
         categories,
         pagination: {
@@ -285,8 +324,10 @@ export const getCategories = async (req, res) => {
           limit,
           total_pages: totalPages,
           total_categories: totalCategories,
-          has_next_page: page < totalPages,
-          has_previous_page: page > 1,
+
+          has_next_page: limit !== null && page < totalPages,
+
+          has_previous_page: limit !== null && page > 1,
         },
       },
     });
@@ -610,9 +651,9 @@ export const exportCategories = async (req, res) => {
     // STEP 6: Define only four export columns
     worksheet.columns = [
       { header: "Category Name", key: "category_name", width: 25 },
-      { header: "Slug", key: "slug", width: 25, }, 
-      { header: "Description", key: "description", width: 45,},
-      { header: "Active", key: "is_active", width: 15,},
+      { header: "Slug", key: "slug", width: 25 },
+      { header: "Description", key: "description", width: 45 },
+      { header: "Active", key: "is_active", width: 15 },
     ];
 
     // STEP 7: Add category data
@@ -902,393 +943,393 @@ const readCsvFile = (buffer) => {
   });
 };
 
-export const importCategories = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "Please upload a CSV or Excel file.",
-      });
-    }
-
-    // ==============================================
-    // STEP 1: CHECK FILE TYPE
-    // ==============================================
-
-    const extension = req.file.originalname.split(".").pop().toLowerCase();
-
-    if (!["csv", "xlsx"].includes(extension)) {
-      return res.status(400).json({
-        success: false,
-        message: "Only CSV and XLSX files are allowed.",
-      });
-    }
-
-    // ==============================================
-    // STEP 3: READ FILE
-    // ==============================================
-
-    let rows;
-
-    if (extension === "csv") {
-      rows = readCsvFile(req.file.buffer);
-    } else {
-      rows = await readExcelFile(req.file.buffer);
-    }
-
-    if (!rows || rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "The uploaded file is empty.",
-      });
-    }
-
-    if (rows.length > 500) {
-      return res.status(400).json({
-        success: false,
-        message: "Maximum 500 rows are allowed per import.",
-      });
-    }
-
-    // ==============================================
-    // STEP 4: VALIDATE ROWS
-    // ==============================================
-
-    const validRows = [];
-    const invalidCategories = [];
-    const duplicateCategories = [];
-
-    const fileNameSet = new Set();
-    const fileSlugSet = new Set();
-
-    for (let index = 0; index < rows.length; index++) {
-      const row = rows[index];
-
-      const categoryName = normalizeText(row.category_name);
-      const slug = normalizeText(row.slug);
-
-      const description = normalizeText(row.description);
-      const icon = normalizeText(row.icon);
-
-      const isActive = parseBoolean(row.is_active, true);
-      const isFeatured = parseBoolean(row.is_featured, false);
-
-      const sortOrder = parseNumber(row.sort_order, 0);
-
-      const commissionPercentage = parseNumber(row.commission_percentage, 0);
-
-      const errors = [];
-
-      // Required fields
-      if (!categoryName) {
-        errors.push("category_name is required.");
-      }
-
-      if (!slug) {
-        errors.push("slug is required.");
-      }
-
-      // Boolean validation
-      if (isActive === null) {
-        errors.push("is_active must be true or false.");
-      }
-
-      if (isFeatured === null) {
-        errors.push("is_featured must be true or false.");
-      }
-
-      // Number validation
-      if (sortOrder === null || sortOrder < 0) {
-        errors.push("sort_order must be a non-negative number.");
-      }
-
-      if (
-        commissionPercentage === null ||
-        commissionPercentage < 0 ||
-        commissionPercentage > 100
-      ) {
-        errors.push("commission_percentage must be between 0 and 100.");
-      }
-
-      // ==============================================
-      // CHECK DUPLICATES WITHIN UPLOADED FILE
-      // ==============================================
-
-      const normalizedName = normalizeKey(categoryName);
-      const normalizedSlug = normalizeKey(slug);
-
-      if (categoryName && fileNameSet.has(normalizedName)) {
-        errors.push("Duplicate category_name found in uploaded file.");
-      }
-
-      if (slug && fileSlugSet.has(normalizedSlug)) {
-        errors.push("Duplicate slug found in uploaded file.");
-      }
-
-      // Mark values as seen
-      if (categoryName) {
-        fileNameSet.add(normalizedName);
-      }
-
-      if (slug) {
-        fileSlugSet.add(normalizedSlug);
-      }
-
-      // ==============================================
-      // INVALID ROW
-      // ==============================================
-
-      if (errors.length > 0) {
-        invalidCategories.push({
-          row_number: index + 2,
-          category_name: categoryName,
-          slug,
-          errors,
-        });
-
-        continue;
-      }
-
-      // ==============================================
-      // PREPARE VALID CATEGORY
-      // ==============================================
-
-      validRows.push({
-        category_name: categoryName,
-        slug,
-        description,
-        icon,
-        is_active: isActive,
-        is_featured: isFeatured,
-        sort_order: sortOrder,
-        commission_percentage: commissionPercentage,
-        created_by: req.user.id,
-      });
-    }
-
-    // ==============================================
-    // STEP 5: CHECK MONGODB DUPLICATES
-    // ==============================================
-
-    const existingCategories = [];
-
-    if (validRows.length > 0) {
-      const nameRegexes = validRows.map((category) => ({
-        category_name: {
-          $regex: `^${escapeRegex(category.category_name)}$`,
-          $options: "i",
-        },
-      }));
-
-      const slugRegexes = validRows.map((category) => ({
-        slug: {
-          $regex: `^${escapeRegex(category.slug)}$`,
-          $options: "i",
-        },
-      }));
-
-      const existingCategoriesFromDB = await Category.find({
-        $or: [...nameRegexes, ...slugRegexes],
-      })
-        .select("category_name slug")
-        .lean();
-
-      existingCategories.push(...existingCategoriesFromDB);
-    }
-
-    // ==============================================
-    // STEP 6: IDENTIFY DUPLICATES
-    // ==============================================
-
-    const existingNameSet = new Set(
-      existingCategories.map((category) =>
-        normalizeKey(category.category_name),
-      ),
-    );
-
-    const existingSlugSet = new Set(
-      existingCategories.map((category) => normalizeKey(category.slug)),
-    );
-
-    const newCategories = [];
-
-    for (const category of validRows) {
-      const normalizedName = normalizeKey(category.category_name);
-
-      const normalizedSlug = normalizeKey(category.slug);
-
-      const nameExists = existingNameSet.has(normalizedName);
-      const slugExists = existingSlugSet.has(normalizedSlug);
-
-      if (nameExists || slugExists) {
-        duplicateCategories.push({
-          category_name: category.category_name,
-          slug: category.slug,
-          reason: [
-            ...(nameExists ? ["Category name already exists."] : []),
-            ...(slugExists ? ["Slug already exists."] : []),
-          ],
-        });
-
-        continue;
-      }
-
-      newCategories.push(category);
-
-      // Prevent duplicates within this import set
-      existingNameSet.add(normalizedName);
-      existingSlugSet.add(normalizedSlug);
-    }
-
-    // ==============================================
-    // STEP 7: INSERT NEW CATEGORIES
-    // ==============================================
-
-    let importedCategories = [];
-
-    if (newCategories.length > 0) {
-      importedCategories = await Category.insertMany(newCategories, {
-        ordered: false,
-      });
-    }
-
-    // ==============================================
-    // STEP 8: RETURN RESPONSE
-    // ==============================================
-
-    return res.status(200).json({
-      success: true,
-      message: "Category import completed successfully.",
-      data: {
-        total_rows: rows.length,
-        imported_count: importedCategories.length,
-        duplicate_count: duplicateCategories.length,
-        invalid_count: invalidCategories.length,
-        skipped_count: duplicateCategories.length + invalidCategories.length,
-        imported_categories: importedCategories,
-        duplicate_categories: duplicateCategories,
-        invalid_categories: invalidCategories,
-      },
-    });
-  } catch (error) {
-    console.error("Category import error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Something went wrong while importing categories.",
-      error: error.message,
-    });
-  }
-};
-
-export const downloadCategoryImportTemplate = async (req, res) => {
-  try {
-    // STEP 1: Get requested format
-    const format = String(req.query.format || "xlsx")
-      .trim()
-      .toLowerCase();
-
-    // STEP 2: Validate format
-    if (!["xlsx", "csv"].includes(format)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid format. Supported formats are xlsx and csv.",
-      });
-    }
-
-    // STEP 3: Define template columns
-    const columns = [
-      "category_name",
-      "slug",
-      "description",
-      "is_active",
-      "is_featured",
-      "sort_order",
-    ];
-
-    // STEP 4: Generate CSV template
-    if (format === "csv") {
-      const csvContent = columns.join(",") + "\n";
-
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-
-      res.setHeader(
-        "Content-Disposition",
-        'attachment; filename="Category_Import_Template.csv"',
-      );
-
-      return res.status(200).send(csvContent);
-    }
-
-    // STEP 5: Generate Excel template
-    const workbook = new Exceljs.Workbook();
-
-    const worksheet = workbook.addWorksheet("Categories");
-
-    worksheet.columns = [
-      { header: "category_name", key: "category_name", width: 25 },
-      { header: "slug", key: "slug", width: 25 },
-      { header: "description", key: "description", width: 40 },
-      { header: "is_active", key: "is_active", width: 15 },
-      { header: "is_featured", key: "is_featured", width: 15 },
-      { header: "sort_order", key: "sort_order", width: 15 },
-    ];
-
-    // STEP 6: Style header row
-    const headerRow = worksheet.getRow(1);
-
-    headerRow.font = {
-      bold: true,
-      color: { argb: "FFFFFFFF" },
-    };
-
-    headerRow.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FF1F4E78" },
-    };
-
-    headerRow.alignment = {
-      vertical: "middle",
-      horizontal: "center",
-    };
-
-    headerRow.height = 25;
-
-    // STEP 7: Add filter and freeze header
-    worksheet.autoFilter = {
-      from: "A1",
-      to: "F1",
-    };
-
-    worksheet.views = [
-      {
-        state: "frozen",
-        ySplit: 1,
-      },
-    ];
-
-    // STEP 8: Generate Excel buffer
-    const buffer = await workbook.xlsx.writeBuffer();
-
-    // STEP 9: Send downloadable file
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
-
-    res.setHeader(
-      "Content-Disposition",
-      'attachment; filename="Category_Import_Template.xlsx"',
-    );
-
-    return res.status(200).send(Buffer.from(buffer));
-  } catch (error) {
-    console.error("Download Category Template Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to download category import template.",
-    });
-  }
-};
+// export const importCategories = async (req, res) => {
+//   try {
+//     if (!req.file) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Please upload a CSV or Excel file.",
+//       });
+//     }
+
+//     // ==============================================
+//     // STEP 1: CHECK FILE TYPE
+//     // ==============================================
+
+//     const extension = req.file.originalname.split(".").pop().toLowerCase();
+
+//     if (!["csv", "xlsx"].includes(extension)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Only CSV and XLSX files are allowed.",
+//       });
+//     }
+
+//     // ==============================================
+//     // STEP 3: READ FILE
+//     // ==============================================
+
+//     let rows;
+
+//     if (extension === "csv") {
+//       rows = readCsvFile(req.file.buffer);
+//     } else {
+//       rows = await readExcelFile(req.file.buffer);
+//     }
+
+//     if (!rows || rows.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "The uploaded file is empty.",
+//       });
+//     }
+
+//     if (rows.length > 500) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Maximum 500 rows are allowed per import.",
+//       });
+//     }
+
+//     // ==============================================
+//     // STEP 4: VALIDATE ROWS
+//     // ==============================================
+
+//     const validRows = [];
+//     const invalidCategories = [];
+//     const duplicateCategories = [];
+
+//     const fileNameSet = new Set();
+//     const fileSlugSet = new Set();
+
+//     for (let index = 0; index < rows.length; index++) {
+//       const row = rows[index];
+
+//       const categoryName = normalizeText(row.category_name);
+//       const slug = normalizeText(row.slug);
+
+//       const description = normalizeText(row.description);
+//       const icon = normalizeText(row.icon);
+
+//       const isActive = parseBoolean(row.is_active, true);
+//       const isFeatured = parseBoolean(row.is_featured, false);
+
+//       const sortOrder = parseNumber(row.sort_order, 0);
+
+//       const commissionPercentage = parseNumber(row.commission_percentage, 0);
+
+//       const errors = [];
+
+//       // Required fields
+//       if (!categoryName) {
+//         errors.push("category_name is required.");
+//       }
+
+//       if (!slug) {
+//         errors.push("slug is required.");
+//       }
+
+//       // Boolean validation
+//       if (isActive === null) {
+//         errors.push("is_active must be true or false.");
+//       }
+
+//       if (isFeatured === null) {
+//         errors.push("is_featured must be true or false.");
+//       }
+
+//       // Number validation
+//       if (sortOrder === null || sortOrder < 0) {
+//         errors.push("sort_order must be a non-negative number.");
+//       }
+
+//       if (
+//         commissionPercentage === null ||
+//         commissionPercentage < 0 ||
+//         commissionPercentage > 100
+//       ) {
+//         errors.push("commission_percentage must be between 0 and 100.");
+//       }
+
+//       // ==============================================
+//       // CHECK DUPLICATES WITHIN UPLOADED FILE
+//       // ==============================================
+
+//       const normalizedName = normalizeKey(categoryName);
+//       const normalizedSlug = normalizeKey(slug);
+
+//       if (categoryName && fileNameSet.has(normalizedName)) {
+//         errors.push("Duplicate category_name found in uploaded file.");
+//       }
+
+//       if (slug && fileSlugSet.has(normalizedSlug)) {
+//         errors.push("Duplicate slug found in uploaded file.");
+//       }
+
+//       // Mark values as seen
+//       if (categoryName) {
+//         fileNameSet.add(normalizedName);
+//       }
+
+//       if (slug) {
+//         fileSlugSet.add(normalizedSlug);
+//       }
+
+//       // ==============================================
+//       // INVALID ROW
+//       // ==============================================
+
+//       if (errors.length > 0) {
+//         invalidCategories.push({
+//           row_number: index + 2,
+//           category_name: categoryName,
+//           slug,
+//           errors,
+//         });
+
+//         continue;
+//       }
+
+//       // ==============================================
+//       // PREPARE VALID CATEGORY
+//       // ==============================================
+
+//       validRows.push({
+//         category_name: categoryName,
+//         slug,
+//         description,
+//         icon,
+//         is_active: isActive,
+//         is_featured: isFeatured,
+//         sort_order: sortOrder,
+//         commission_percentage: commissionPercentage,
+//         created_by: req.user.id,
+//       });
+//     }
+
+//     // ==============================================
+//     // STEP 5: CHECK MONGODB DUPLICATES
+//     // ==============================================
+
+//     const existingCategories = [];
+
+//     if (validRows.length > 0) {
+//       const nameRegexes = validRows.map((category) => ({
+//         category_name: {
+//           $regex: `^${escapeRegex(category.category_name)}$`,
+//           $options: "i",
+//         },
+//       }));
+
+//       const slugRegexes = validRows.map((category) => ({
+//         slug: {
+//           $regex: `^${escapeRegex(category.slug)}$`,
+//           $options: "i",
+//         },
+//       }));
+
+//       const existingCategoriesFromDB = await Category.find({
+//         $or: [...nameRegexes, ...slugRegexes],
+//       })
+//         .select("category_name slug")
+//         .lean();
+
+//       existingCategories.push(...existingCategoriesFromDB);
+//     }
+
+//     // ==============================================
+//     // STEP 6: IDENTIFY DUPLICATES
+//     // ==============================================
+
+//     const existingNameSet = new Set(
+//       existingCategories.map((category) =>
+//         normalizeKey(category.category_name),
+//       ),
+//     );
+
+//     const existingSlugSet = new Set(
+//       existingCategories.map((category) => normalizeKey(category.slug)),
+//     );
+
+//     const newCategories = [];
+
+//     for (const category of validRows) {
+//       const normalizedName = normalizeKey(category.category_name);
+
+//       const normalizedSlug = normalizeKey(category.slug);
+
+//       const nameExists = existingNameSet.has(normalizedName);
+//       const slugExists = existingSlugSet.has(normalizedSlug);
+
+//       if (nameExists || slugExists) {
+//         duplicateCategories.push({
+//           category_name: category.category_name,
+//           slug: category.slug,
+//           reason: [
+//             ...(nameExists ? ["Category name already exists."] : []),
+//             ...(slugExists ? ["Slug already exists."] : []),
+//           ],
+//         });
+
+//         continue;
+//       }
+
+//       newCategories.push(category);
+
+//       // Prevent duplicates within this import set
+//       existingNameSet.add(normalizedName);
+//       existingSlugSet.add(normalizedSlug);
+//     }
+
+//     // ==============================================
+//     // STEP 7: INSERT NEW CATEGORIES
+//     // ==============================================
+
+//     let importedCategories = [];
+
+//     if (newCategories.length > 0) {
+//       importedCategories = await Category.insertMany(newCategories, {
+//         ordered: false,
+//       });
+//     }
+
+//     // ==============================================
+//     // STEP 8: RETURN RESPONSE
+//     // ==============================================
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Category import completed successfully.",
+//       data: {
+//         total_rows: rows.length,
+//         imported_count: importedCategories.length,
+//         duplicate_count: duplicateCategories.length,
+//         invalid_count: invalidCategories.length,
+//         skipped_count: duplicateCategories.length + invalidCategories.length,
+//         imported_categories: importedCategories,
+//         duplicate_categories: duplicateCategories,
+//         invalid_categories: invalidCategories,
+//       },
+//     });
+//   } catch (error) {
+//     console.error("Category import error:", error);
+
+//     return res.status(500).json({
+//       success: false,
+//       message: "Something went wrong while importing categories.",
+//       error: error.message,
+//     });
+//   }
+// };
+
+// export const downloadCategoryImportTemplate = async (req, res) => {
+//   try {
+//     // STEP 1: Get requested format
+//     const format = String(req.query.format || "xlsx")
+//       .trim()
+//       .toLowerCase();
+
+//     // STEP 2: Validate format
+//     if (!["xlsx", "csv"].includes(format)) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Invalid format. Supported formats are xlsx and csv.",
+//       });
+//     }
+
+//     // STEP 3: Define template columns
+//     const columns = [
+//       "category_name",
+//       "slug",
+//       "description",
+//       "is_active",
+//       "is_featured",
+//       "sort_order",
+//     ];
+
+//     // STEP 4: Generate CSV template
+//     if (format === "csv") {
+//       const csvContent = columns.join(",") + "\n";
+
+//       res.setHeader("Content-Type", "text/csv; charset=utf-8");
+
+//       res.setHeader(
+//         "Content-Disposition",
+//         'attachment; filename="Category_Import_Template.csv"',
+//       );
+
+//       return res.status(200).send(csvContent);
+//     }
+
+//     // STEP 5: Generate Excel template
+//     const workbook = new Exceljs.Workbook();
+
+//     const worksheet = workbook.addWorksheet("Categories");
+
+//     worksheet.columns = [
+//       { header: "category_name", key: "category_name", width: 25 },
+//       { header: "slug", key: "slug", width: 25 },
+//       { header: "description", key: "description", width: 40 },
+//       { header: "is_active", key: "is_active", width: 15 },
+//       { header: "is_featured", key: "is_featured", width: 15 },
+//       { header: "sort_order", key: "sort_order", width: 15 },
+//     ];
+
+//     // STEP 6: Style header row
+//     const headerRow = worksheet.getRow(1);
+
+//     headerRow.font = {
+//       bold: true,
+//       color: { argb: "FFFFFFFF" },
+//     };
+
+//     headerRow.fill = {
+//       type: "pattern",
+//       pattern: "solid",
+//       fgColor: { argb: "FF1F4E78" },
+//     };
+
+//     headerRow.alignment = {
+//       vertical: "middle",
+//       horizontal: "center",
+//     };
+
+//     headerRow.height = 25;
+
+//     // STEP 7: Add filter and freeze header
+//     worksheet.autoFilter = {
+//       from: "A1",
+//       to: "F1",
+//     };
+
+//     worksheet.views = [
+//       {
+//         state: "frozen",
+//         ySplit: 1,
+//       },
+//     ];
+
+//     // STEP 8: Generate Excel buffer
+//     const buffer = await workbook.xlsx.writeBuffer();
+
+//     // STEP 9: Send downloadable file
+//     res.setHeader(
+//       "Content-Type",
+//       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+//     );
+
+//     res.setHeader(
+//       "Content-Disposition",
+//       'attachment; filename="Category_Import_Template.xlsx"',
+//     );
+
+//     return res.status(200).send(Buffer.from(buffer));
+//   } catch (error) {
+//     console.error("Download Category Template Error:", error);
+
+//     return res.status(500).json({
+//       success: false,
+//       message: "Unable to download category import template.",
+//     });
+//   }
+// };

@@ -131,13 +131,48 @@ const subServiceImageUpload = multer({
   fileFilter: (req, file, cb) => {
     const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
 
-    if(!allowedTypes.includes(file.mimetype)){
-      return cb(
-        new Error("Only JPEG, PNG and WEBP images are allowed.")
-      )
+    if (!allowedTypes.includes(file.mimetype)) {
+      return cb(new Error("Only JPEG, PNG and WEBP images are allowed."));
     }
-    cb(null, true)
+    cb(null, true);
   },
 });
 
 export const uploadSubServiceImage = subServiceImageUpload.single("image");
+
+
+const importCatalogueFileUpload = multer({
+  storage: multer.memoryStorage(),
+
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5 MB
+    files: 1,
+  },
+
+  fileFilter: (req, file, callback) => {
+    const allowedMimeTypes = [
+      "text/csv",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/octet-stream",
+    ];
+
+    const extension = file.originalname.split(".").pop().toLowerCase();
+
+    // Check extension
+    if (!["csv", "xlsx"].includes(extension)) {
+      return callback(new Error("Only CSV and XLSX files are allowed."));
+    }
+
+    // Check MIME type
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      return callback(
+        new Error("Invalid file type. Only CSV and XLSX files are allowed."),
+      );
+    }
+
+    callback(null, true);
+  },
+});
+
+export const uploadCatalogueImportFile = importCatalogueFileUpload.single("file");

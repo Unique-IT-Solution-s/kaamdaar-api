@@ -672,9 +672,9 @@ export const getServiceById = async (req, res) => {
     // console.log("Service collection:", Service.collection.name);
     // console.log("Service category ID:", serviceId);
 
-    const categoryCheck = await Category.findById("6afda3b5e2eed8276a1c792c");
+    // const categoryCheck = await Category.findById("6afda3b5e2eed8276a1c792c");
 
-    console.log("Category found:", categoryCheck);
+    // console.log("Category found:", categoryCheck);
 
     const services = await Service.aggregate([
       {

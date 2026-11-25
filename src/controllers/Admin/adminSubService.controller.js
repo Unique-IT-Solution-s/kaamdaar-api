@@ -1,6 +1,9 @@
 import mongoose from "mongoose";
 import Service from "../../models/Service.js";
 import SubService from "../../models/SubService.js";
+import Exceljs from "exceljs";
+import PDFDocument from "pdfkit";
+
 import {
   deleteImageFromCloudinary,
   uploadImageToCloudinary,
@@ -461,7 +464,7 @@ export const getSubServiceById = async (req, res) => {
 };
 
 export const updateSubService = async (req, res) => {
-    let uploadedImage = null;
+  let uploadedImage = null;
   try {
     const { id } = req.params;
     const adminId = req.user?.id;
@@ -573,11 +576,7 @@ export const updateSubService = async (req, res) => {
     if (req.body.sort_order !== undefined) {
       sortOrder = Number(req.body.sort_order);
 
-      if (
-        !Number.isInteger(sortOrder) ||
-        sortOrder < 0 ||
-        sortOrder > 10000
-      ) {
+      if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) {
         return res.status(400).json({
           success: false,
           message: "sort_order must be an integer between 0 and 10000.",
@@ -585,10 +584,7 @@ export const updateSubService = async (req, res) => {
       }
     }
 
-    const escapedName = subserviceName.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      "\\$&"
-    );
+    const escapedName = subserviceName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const existingName = await SubService.findOne({
       _id: { $ne: subService._id },
@@ -619,7 +615,6 @@ export const updateSubService = async (req, res) => {
       });
     }
 
-
     let removeImage = false;
 
     if (req.body.remove_image !== undefined) {
@@ -648,7 +643,7 @@ export const updateSubService = async (req, res) => {
     if (req.file) {
       uploadedImage = await uploadImageToCloudinary(
         req.file.buffer,
-        "kaamdaar/subservices"
+        "kaamdaar/subservices",
       );
 
       const imageUrl = uploadedImage.secure_url || uploadedImage.url;
@@ -681,8 +676,7 @@ export const updateSubService = async (req, res) => {
 
     // STEP 16: Delete old image only after successful DB update
     const imageWasReplacedOrRemoved =
-      Boolean(oldImagePublicId) &&
-      (Boolean(req.file) || removeImage);
+      Boolean(oldImagePublicId) && (Boolean(req.file) || removeImage);
 
     if (
       imageWasReplacedOrRemoved &&
@@ -694,7 +688,7 @@ export const updateSubService = async (req, res) => {
       } catch (cleanupError) {
         console.error(
           "Old SubService image cleanup failed:",
-          cleanupError.message
+          cleanupError.message,
         );
       }
     }
@@ -731,8 +725,6 @@ export const updateSubService = async (req, res) => {
     });
   }
 };
-
-
 
 export const deleteSubService = async (req, res) => {
   try {
@@ -775,12 +767,12 @@ export const deleteSubService = async (req, res) => {
       try {
         const result = await deleteImageFromCloudinary(imagePublicId);
 
-        cloudinaryDeleted = result?.result === "ok" ||
-          result?.result === "not found";
+        cloudinaryDeleted =
+          result?.result === "ok" || result?.result === "not found";
       } catch (cloudinaryError) {
         console.error(
           "Cloudinary SubService image deletion failed:",
-          cloudinaryError
+          cloudinaryError,
         );
 
         cloudinaryDeleted = false;
@@ -799,7 +791,6 @@ export const deleteSubService = async (req, res) => {
         cloudinary_deleted: cloudinaryDeleted,
       },
     });
-
   } catch (error) {
     console.error("Delete SubService Error:", error);
 
@@ -810,3 +801,308 @@ export const deleteSubService = async (req, res) => {
   }
 };
 
+export const exportSubServices = async (req, res) => {
+  try {
+    const { format = "xlsx", service_id, is_active, search } = req.query;
+    const exportFormat = String(format).trim().toLowerCase();
+
+    if (!["xlsx", "csv", "pdf"].includes(exportFormat)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid format. Use xlsx, csv, or pdf.",
+      });
+    }
+
+    const match = {};
+
+    if (service_id) {
+      if (!mongoose.Types.ObjectId.isValid(service_id)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid Service Id",
+        });
+      }
+
+      match.service_id = new mongoose.Types.ObjectId(service_id);
+    }
+
+    if (is_active !== undefined) {
+      const activeValue = String(is_active).trim().toLowerCase();
+
+      if (!["true", "false"].includes(activeValue)) {
+        return res.status(400).json({
+          success: false,
+          message: "is_active must be true or false.",
+        });
+      }
+      match.is_active = activeValue === "true";
+    }
+
+    if (search && String(search).trim()) {
+      const escapedSearch = String(search)
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      match.$or = [
+        { subservice_name: { $regex: escapedSearch, $options: "i" } },
+        { slug: { $regex: escapedSearch, $options: "i" } },
+        { description: { $regex: escapedSearch, $options: "i" } },
+      ];
+    }
+
+    const subServices = await SubService.aggregate([
+      {
+        $match: match,
+      },
+      {
+        $lookup: {
+          from: "services",
+          localField: "service_id",
+          foreignField: "_id",
+          as: "service",
+        },
+      },
+      {
+        $unwind: {
+          path: "$service",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $sort: {
+          sort_order: 1,
+          createdAt: -1,
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          subservice_name: "$subservice_name",
+          slug: 1,
+          service_name: "$service.service_name",
+          description: 1,
+          is_active: 1,
+          image_url: "$image.url",
+          createdAt: {
+            $ifNull: ["$createdAt", "$updatedAt"],
+          },
+        },
+      },
+    ]);
+
+    // console.log(
+    //   "SubServices aggregation result:",
+    //   JSON.stringify(subServices, null, 2),
+    // );
+
+    if (!subServices.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No subService found for export",
+      });
+    }
+
+    // STEP 1: Prepare export rows
+    const rows = subServices.map((item) => ({
+      "SubService Name": item.subservice_name || "",
+      Slug: item.slug || "",
+      "Service Name": item.service_name || "",
+      Description: item.description || "",
+      "Active Status": item.is_active ? "Yes" : "No",
+      "Image URL": item.image_url || "",
+      "Created At": item.createdAt
+        ? new Date(item.createdAt).toLocaleString("en-IN")
+        : "",
+    }));
+
+    // console.log("Aggregation first record:", subServices[0]);
+    // console.log("Excel first row:", rows[0]);
+    // console.log("SubService Name value:", subServices[0]?.subservice_name);
+
+    const fileName = `subservices_${Date.now()}`;
+
+    // Export Excel
+    if (exportFormat === "xlsx") {
+      const workbook = new Exceljs.Workbook();
+      const worksheet = workbook.addWorksheet("SubServices");
+
+      // STEP 1: Define columns with simple keys
+      worksheet.columns = [
+        { header: "SubService Name", key: "subservice_name", width: 30 },
+        { header: "Slug", key: "slug", width: 30 },
+        { header: "Service Name", key: "service_name", width: 30 },
+        { header: "Description", key: "description", width: 45 },
+        { header: "Active Status", key: "active_status", width: 15 },
+        { header: "Image URL", key: "image_url", width: 50 },
+        { header: "Created At", key: "created_at", width: 25 },
+      ];
+
+      // STEP 2: Prepare Excel rows
+      const excelRows = subServices.map((item) => ({
+        subservice_name: item.subservice_name || "",
+        slug: item.slug || "",
+        service_name: item.service_name || "",
+        description: item.description || "",
+        active_status: item.is_active ? "Yes" : "No",
+        image_url: item.image_url || "",
+        created_at: item.createdAt
+          ? new Date(item.createdAt).toLocaleString("en-IN")
+          : "",
+      }));
+
+      // STEP 3: Add rows only once
+      worksheet.addRows(excelRows);
+
+      // STEP 4: Style header
+      worksheet.getRow(1).font = {
+        bold: true,
+        color: { argb: "FFFFFFFF" },
+      };
+
+      worksheet.getRow(1).fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF1F4E78" },
+      };
+
+      // STEP 5: Freeze header and enable filter
+      worksheet.views = [{ state: "frozen", ySplit: 1 }];
+
+      worksheet.autoFilter = {
+        from: "A1",
+        to: "G1",
+      };
+
+      // STEP 6: Generate Excel buffer
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileName}.xlsx"`,
+      );
+
+      return res.status(200).send(Buffer.from(buffer));
+    }
+
+    // : Export CSV
+    if (exportFormat === "csv") {
+      const workbook = new Exceljs.Workbook();
+      const worksheet = workbook.addWorksheet("SubServices");
+
+      worksheet.columns = [
+        { header: "SubService Name", key: "subservice_name" },
+        { header: "Slug", key: "slug" },
+        { header: "Service Name", key: "service_name" },
+        { header: "Description", key: "description" },
+        { header: "Active Status", key: "active_status" },
+        { header: "Image URL", key: "image_url" },
+        { header: "Created At", key: "created_at" },
+      ];
+
+      const csvRows = subServices.map((item) => ({
+        subservice_name: item.subservice_name || "",
+        slug: item.slug || "",
+        service_name: item.service_name || "",
+        description: item.description || "",
+        active_status: item.is_active ? "Yes" : "No",
+        image_url: item.image_url || "",
+        created_at: item.createdAt
+          ? new Date(item.createdAt).toLocaleString("en-IN")
+          : "",
+      }));
+
+      worksheet.addRows(csvRows);
+
+      const buffer = await workbook.csv.writeBuffer();
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileName}.csv"`,
+      );
+
+      return res.status(200).send(Buffer.from(buffer));
+    }
+
+    // Export Pdf
+    if (exportFormat === "pdf") {
+      const doc = new PDFDocument({
+        size: "A4",
+        layout: "landscape",
+        margin: 30,
+        bufferPages: true,
+      });
+
+      const chunks = [];
+
+      doc.on("data", (chunk) => chunks.push(chunk));
+
+      const pdfBufferPromise = new Promise((resolve, reject) => {
+        doc.on("end", () => resolve(Buffer.concat(chunks)));
+        doc.on("error", reject);
+      });
+
+      doc
+        .fontSize(18)
+        .font("Helvetica-Bold")
+        .text("SubServices Export", { align: "center" });
+
+      doc.moveDown(0.5);
+      doc
+        .fontSize(9)
+        .font("Helvetica")
+        .text(`Total SubServices: ${rows.length}`);
+
+      doc.moveDown();
+
+      rows.forEach((item, index) => {
+        const rowText = [
+          `${index + 1}. ${item["SubService Name"]}`,
+          `Slug: ${item["Slug"]}`,
+          `Service: ${item["Service Name"]}`,
+          `Description: ${item["Description"] || "-"}`,
+          `Active Status: ${item["Active Status"]}`,
+          `Image URL: ${item["Image URL"] || "-"}`,
+          `Created At: ${item["Created At"] || "-"}`,
+        ].join("\n");
+
+        const requiredHeight = doc.heightOfString(rowText, { width: 770 }) + 16;
+
+        if (doc.y + requiredHeight > doc.page.height - 35) {
+          doc.addPage();
+        }
+
+        doc.fontSize(8).font("Helvetica").text(rowText, {
+          width: 770,
+        });
+
+        doc.moveDown(0.6);
+      });
+
+      doc.end();
+
+      const pdfBuffer = await pdfBufferPromise;
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileName}.pdf"`,
+      );
+
+      return res.status(200).send(pdfBuffer);
+    }
+  } catch (error) {
+    console.error("Export SubServices Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to export SubServices.",
+    });
+  }
+};

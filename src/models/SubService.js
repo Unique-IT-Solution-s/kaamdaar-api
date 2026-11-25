@@ -19,6 +19,26 @@ const subServiceImageSchema = new mongoose.Schema(
   },
 );
 
+const subServicePricingSchema = new mongoose.Schema(
+  {
+    base_price: {
+      type: Number,
+      min: 1,
+      default: null,
+      validate: {
+        validator: (value) => value === null || Number.isSafeInteger(value),
+        message: "SubService price must be a valid integer in paise.",
+      },
+    },
+
+    currency: {
+      type: String,
+      enum: ["INR"],
+      default: "INR",
+    },
+  },
+  { _id: false },
+);
 
 const subServiceSchema = new mongoose.Schema(
   {
@@ -53,6 +73,34 @@ const subServiceSchema = new mongoose.Schema(
       default: null,
     },
 
+    pricing: {
+      type: subServicePricingSchema,
+      default: () => ({}),
+    },
+
+    estimated_duration_minutes: {
+      type: Number,
+      min: 1,
+      default: null,
+      validate: {
+        validator: (value) => value === null || Number.isInteger(value),
+        message: "Duration must be a whole number of minutes.",
+      },
+    },
+
+    unit: {
+      type: String,
+      trim: true,
+      maxlength: 50,
+      default: "per task",
+    },
+
+    tagline: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+      default: null,
+    },
 
     // C. SUBSERVICE IMAGE
     image: {

@@ -147,6 +147,20 @@ const serviceSchema = new mongoose.Schema(
       },
     },
 
+    service_tagline: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+      default: null,
+    },
+
+    service_unit: {
+      type: String,
+      trim: true,
+      maxlength: 50,
+      default: "per task",
+    },
+
     // -------------------------------------
     // ADMIN TRACKING
     // -------------------------------------
