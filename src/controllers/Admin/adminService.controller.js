@@ -325,9 +325,20 @@ export const createService = async (req, res) => {
 
 export const getServices = async (req, res) => {
   try {
-    //......  pagination
-    const page = Number(req.query.page ?? 1);
-    const limit = Number(req.query.limit ?? 10);
+    // STEP 1: GET USER ROLE
+    // ============================================
+
+    const userType = req.user?.user?.user_type ?? req.user?.user_type;
+
+    const isCustomer = userType === "CUSTOMER";
+
+    // STEP 2: PAGINATION
+    // ============================================
+
+    const page = req.query.page !== undefined ? Number(req.query.page) : 1;
+
+    const limit =
+      req.query.limit !== undefined ? Number(req.query.limit) : null;
 
     if (!Number.isSafeInteger(page) || page < 1) {
       return res.status(400).json({
@@ -336,16 +347,28 @@ export const getServices = async (req, res) => {
       });
     }
 
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    if (
+      limit !== null &&
+      (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+    ) {
       return res.status(400).json({
         success: false,
         message: "limit must be between 1 and 100.",
       });
     }
 
-    const skip = (page - 1) * limit;
+    if (req.query.page !== undefined && limit === null && page > 1) {
+      return res.status(400).json({
+        success: false,
+        message: "limit is required when page is greater than 1.",
+      });
+    }
 
-    //.......   SEARCH VALIDATION
+    const skip = limit !== null ? (page - 1) * limit : 0;
+
+    // ============================================
+    // STEP 3: SEARCH VALIDATION
+    // ============================================
 
     if (
       req.query.search !== undefined &&
@@ -361,7 +384,7 @@ export const getServices = async (req, res) => {
       typeof req.query.search === "string" ? req.query.search.trim() : "";
 
     // ============================================
-    // STEP 3: BUILD MONGODB FILTER
+    // STEP 4: BUILD MONGODB FILTER
     // ============================================
 
     const filter = {};
@@ -386,7 +409,7 @@ export const getServices = async (req, res) => {
     }
 
     // ============================================
-    // STEP 4: CATEGORY FILTER
+    // STEP 5: CATEGORY FILTER
     // ============================================
 
     if (req.query.category_id !== undefined) {
@@ -406,37 +429,89 @@ export const getServices = async (req, res) => {
     }
 
     // ============================================
-    // STEP 5: ACTIVE STATUS FILTER
+    // STEP 6: ACTIVE STATUS FILTER
     // ============================================
 
     if (req.query.is_active !== undefined) {
-      if (!["true", "false"].includes(req.query.is_active)) {
+      if (
+        typeof req.query.is_active !== "string" ||
+        !["true", "false"].includes(req.query.is_active.toLowerCase())
+      ) {
         return res.status(400).json({
           success: false,
           message: "is_active must be true or false.",
         });
       }
 
-      filter.is_active = req.query.is_active === "true";
+      filter.is_active = req.query.is_active.toLowerCase() === "true";
     }
 
     // ============================================
-    // STEP 6: FEATURED FILTER
+    // STEP 7: FEATURED FILTER
     // ============================================
 
     if (req.query.is_featured !== undefined) {
-      if (!["true", "false"].includes(req.query.is_featured)) {
+      if (
+        typeof req.query.is_featured !== "string" ||
+        !["true", "false"].includes(req.query.is_featured.toLowerCase())
+      ) {
         return res.status(400).json({
           success: false,
           message: "is_featured must be true or false.",
         });
       }
 
-      filter.is_featured = req.query.is_featured === "true";
+      filter.is_featured = req.query.is_featured.toLowerCase() === "true";
     }
 
     // ============================================
-    // STEP 7: SORT VALIDATION
+    // STEP 8: CUSTOMER RESTRICTIONS
+    // ============================================
+
+    if (isCustomer) {
+      // Customers can only see active services
+      filter.is_active = true;
+
+      if (filter.category_id) {
+        // Check whether requested category is active
+        const activeCategoryExists = await Category.exists({
+          _id: filter.category_id,
+          is_active: true,
+        });
+
+        if (!activeCategoryExists) {
+          return res.status(200).json({
+            success: true,
+            message: "No active category or services found.",
+            data: {
+              services: [],
+              pagination: {
+                current_page: page,
+                limit,
+                total_pages: 0,
+                total_services: 0,
+                has_next_page: false,
+                has_previous_page: false,
+              },
+            },
+          });
+        }
+      } else {
+        // When no category_id is supplied,
+        // only fetch services under active categories
+
+        const activeCategoryIds = await Category.find({
+          is_active: true,
+        }).distinct("_id");
+
+        filter.category_id = {
+          $in: activeCategoryIds,
+        };
+      }
+    }
+
+    // ============================================
+    // STEP 9: SORT VALIDATION
     // ============================================
 
     const allowedSortFields = [
@@ -458,7 +533,10 @@ export const getServices = async (req, res) => {
       });
     }
 
-    if (typeof sortOrder !== "string" || !["asc", "desc"].includes(sortOrder)) {
+    if (
+      typeof sortOrder !== "string" ||
+      !["asc", "desc"].includes(sortOrder.toLowerCase())
+    ) {
       return res.status(400).json({
         success: false,
         message: "sort_order must be asc or desc.",
@@ -466,12 +544,19 @@ export const getServices = async (req, res) => {
     }
 
     const sort = {
-      [sortBy]: sortOrder === "asc" ? 1 : -1,
+      [sortBy]: sortOrder.toLowerCase() === "asc" ? 1 : -1,
       _id: 1,
     };
 
     // ============================================
-    // STEP 8: FETCH SERVICES AND TOTAL COUNT
+    // STEP 10: OPTIONAL PAGINATION STAGES
+    // ============================================
+
+    const paginationStages =
+      limit !== null ? [{ $skip: skip }, { $limit: limit }] : [];
+
+    // ============================================
+    // STEP 11: FETCH SERVICES AND TOTAL COUNT
     // ============================================
 
     const [services, totalServices] = await Promise.all([
@@ -484,12 +569,7 @@ export const getServices = async (req, res) => {
           $sort: sort,
         },
 
-        {
-          $skip: skip,
-        },
-        {
-          $limit: limit,
-        },
+        ...paginationStages,
 
         // ========================================
         // LOOKUP CATEGORY DETAILS
@@ -531,8 +611,6 @@ export const getServices = async (req, res) => {
                   },
                 },
               },
-
-              // Calculate total and active sub-services
               {
                 $group: {
                   _id: null,
@@ -619,15 +697,8 @@ export const getServices = async (req, res) => {
       Service.countDocuments(filter),
     ]);
 
-    // ============================================
-    // STEP 9: PAGINATION DETAILS
-    // ============================================
-
-    const totalPages = Math.ceil(totalServices / limit);
-
-    // ============================================
-    // STEP 10: RESPONSE
-    // ============================================
+    const totalPages =
+      limit !== null ? Math.ceil(totalServices / limit) : totalServices > 0 ? 1 : 0;
 
     return res.status(200).json({
       success: true,
@@ -641,8 +712,10 @@ export const getServices = async (req, res) => {
           limit,
           total_pages: totalPages,
           total_services: totalServices,
-          has_next_page: page < totalPages,
-          has_previous_page: page > 1,
+
+          has_next_page: limit !== null && page < totalPages,
+
+          has_previous_page: limit !== null && page > 1,
         },
       },
     });

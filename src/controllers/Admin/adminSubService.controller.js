@@ -8,6 +8,7 @@ import {
   deleteImageFromCloudinary,
   uploadImageToCloudinary,
 } from "../../utils/cloudinary.utils.js";
+import Category from "../../models/Category.js";
 
 export const createSubService = async (req, res) => {
   let uploadImage = null;
@@ -181,12 +182,55 @@ export const createSubService = async (req, res) => {
 };
 
 export const getAllSubServices = async (req, res) => {
-  console.log("GET ALL SUBSERVICES CONTROLLER CALLED");
-  console.log("Query Params:", req.query);
   try {
+    // ============================================
+    // STEP 1: GET USER ROLE
+    // ============================================
+
+    const userType = req.user?.user?.user_type ?? req.user?.user_type;
+
+    const isCustomer = userType === "CUSTOMER";
+
+    // ============================================
+    // STEP 2: PAGINATION
+    // ============================================
+
+    const page = req.query.page !== undefined ? Number(req.query.page) : 1;
+
+    const limit =
+      req.query.limit !== undefined ? Number(req.query.limit) : null;
+
+    if (!Number.isSafeInteger(page) || page < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "page must be a positive number.",
+      });
+    }
+
+    if (
+      limit !== null &&
+      (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "limit must be between 1 and 100.",
+      });
+    }
+
+    if (req.query.page !== undefined && limit === null && page > 1) {
+      return res.status(400).json({
+        success: false,
+        message: "limit is required when page is greater than 1.",
+      });
+    }
+
+    const skip = limit !== null ? (page - 1) * limit : 0;
+
+    // ============================================
+    // STEP 3: GET QUERY PARAMETERS
+    // ============================================
+
     const {
-      page = 1,
-      limit = 10,
       search,
       service_id,
       is_active,
@@ -194,58 +238,79 @@ export const getAllSubServices = async (req, res) => {
       sortOrder = "asc",
     } = req.query;
 
-    const currentPage = Number(page);
-    const pageLimit = Number(limit);
-    if (
-      currentPage < 1 ||
-      !Number.isInteger(currentPage) ||
-      !Number.isInteger(pageLimit) ||
-      pageLimit < 1 ||
-      pageLimit > 100
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid pagination parameters.",
-      });
-    }
+    // ============================================
+    // STEP 4: VALIDATE SERVICE ID
+    // ============================================
 
-    const skip = (currentPage - 1) * pageLimit;
-
-    if (service_id && !mongoose.Types.ObjectId.isValid(service_id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid Service id",
-      });
-    }
-
-    let activefilter;
-
-    if (is_active !== undefined) {
-      const value = String(is_active).trim().toLowerCase();
-      if (value === "true" || value === "1") {
-        activefilter = true;
-      } else if (value === "false" || value === "0") {
-        activefilter = false;
-      } else {
+    if (service_id !== undefined) {
+      if (
+        typeof service_id !== "string" ||
+        !mongoose.isValidObjectId(service_id)
+      ) {
         return res.status(400).json({
           success: false,
-          message: "is_active must be true or false",
+          message: "Invalid service_id.",
         });
       }
     }
+
+    // ============================================
+    // STEP 5: ACTIVE STATUS FILTER
+    // ============================================
+
+    let activeFilter;
+
+    if (is_active !== undefined) {
+      if (typeof is_active !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "is_active must be true or false.",
+        });
+      }
+
+      const value = is_active.trim().toLowerCase();
+
+      if (value === "true" || value === "1") {
+        activeFilter = true;
+      } else if (value === "false" || value === "0") {
+        activeFilter = false;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "is_active must be true or false.",
+        });
+      }
+    }
+
+    // ============================================
+    // STEP 6: BUILD MONGODB FILTER
+    // ============================================
 
     const filter = {};
 
     if (service_id) {
       filter.service_id = new mongoose.Types.ObjectId(service_id);
     }
-    if (activefilter !== undefined) {
-      filter.is_active = activefilter;
+
+    if (activeFilter !== undefined) {
+      filter.is_active = activeFilter;
     }
-    if (search && String(search).trim()) {
-      const escapedSearch = String(search)
-        .trim()
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    // ============================================
+    // STEP 7: SEARCH FILTER
+    // ============================================
+
+    if (search !== undefined && typeof search !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid search parameter.",
+      });
+    }
+
+    const searchValue = search?.trim();
+
+    if (searchValue) {
+      const escapedSearch = searchValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
       filter.$or = [
         {
@@ -263,6 +328,78 @@ export const getAllSubServices = async (req, res) => {
       ];
     }
 
+    // ============================================
+    // STEP 8: CUSTOMER RESTRICTIONS
+    // ============================================
+
+    if (isCustomer) {
+      // Customer must provide service_id
+      if (!filter.service_id) {
+        return res.status(400).json({
+          success: false,
+          message: "service_id is required.",
+        });
+      }
+
+      // Check whether the requested Service is active
+      const activeService = await Service.findOne({
+        _id: filter.service_id,
+        is_active: true,
+      })
+        .select("_id category_id")
+        .lean();
+
+      if (!activeService) {
+        return res.status(200).json({
+          success: true,
+          message: "No active service or sub-services found.",
+          data: {
+            sub_services: [],
+            pagination: {
+              current_page: page,
+              limit,
+              total_pages: 0,
+              total_sub_services: 0,
+              has_next_page: false,
+              has_previous_page: false,
+            },
+          },
+        });
+      }
+
+      // Check whether the parent Category is active
+      const activeCategoryExists = await Category.exists({
+        _id: activeService.category_id,
+        is_active: true,
+      });
+
+      if (!activeCategoryExists) {
+        return res.status(200).json({
+          success: true,
+          message: "No active service or sub-services found.",
+          data: {
+            sub_services: [],
+            pagination: {
+              current_page: page,
+              limit,
+              total_pages: 0,
+              total_sub_services: 0,
+              has_next_page: false,
+              has_previous_page: false,
+            },
+          },
+        });
+      }
+
+      // Only active SubServices
+      filter.service_id = activeService._id;
+      filter.is_active = true;
+    }
+
+    // ============================================
+    // STEP 9: SORT VALIDATION
+    // ============================================
+
     const allowedSortFields = [
       "subservice_name",
       "createdAt",
@@ -270,13 +407,17 @@ export const getAllSubServices = async (req, res) => {
       "sort_order",
     ];
 
-    if (!allowedSortFields.includes(sortBy)) {
+    if (typeof sortBy !== "string" || !allowedSortFields.includes(sortBy)) {
       return res.status(400).json({
         success: false,
         message: "Invalid sortBy field.",
       });
     }
-    if (!["asc", "desc"].includes(String(sortOrder).toLowerCase())) {
+
+    if (
+      typeof sortOrder !== "string" ||
+      !["asc", "desc"].includes(sortOrder.toLowerCase())
+    ) {
       return res.status(400).json({
         success: false,
         message: "sortOrder must be asc or desc.",
@@ -288,13 +429,26 @@ export const getAllSubServices = async (req, res) => {
       _id: 1,
     };
 
+    // ============================================
+    // STEP 10: BUILD PAGINATION PIPELINE
+    // ============================================
+
+    const paginationStages =
+      limit !== null ? [{ $skip: skip }, { $limit: limit }] : [];
+
+    // ============================================
+    // STEP 11: FETCH SUB-SERVICES
+    // ============================================
+
     const result = await SubService.aggregate([
       {
         $match: filter,
       },
+
       {
         $sort: sort,
       },
+
       {
         $facet: {
           metadata: [
@@ -302,33 +456,44 @@ export const getAllSubServices = async (req, res) => {
               $count: "total",
             },
           ],
+
           data: [
-            {
-              $skip: skip,
-            },
-            {
-              $limit: pageLimit,
-            },
+            ...paginationStages,
+
+            // ========================================
+            // LOOKUP SERVICE DETAILS
+            // ========================================
+
             {
               $lookup: {
-                from: "services",
+                from: Service.collection.name,
                 localField: "service_id",
                 foreignField: "_id",
                 as: "service",
               },
             },
+
             {
               $unwind: {
                 path: "$service",
                 preserveNullAndEmptyArrays: true,
               },
             },
+
+            // ========================================
+            // PROJECT REQUIRED FIELDS
+            // ========================================
+
             {
               $project: {
                 service_id: 1,
                 subservice_name: 1,
                 slug: 1,
                 description: 1,
+                pricing: 1,
+                estimated_duration_minutes: 1,
+                unit: 1,
+                tagline: 1,
                 image: 1,
                 is_active: 1,
                 sort_order: 1,
@@ -349,24 +514,43 @@ export const getAllSubServices = async (req, res) => {
       },
     ]);
 
+    // ============================================
+    // STEP 12: PAGINATION DETAILS
+    // ============================================
+
     const subServices = result[0]?.data || [];
 
     const totalSubServices = result[0]?.metadata?.[0]?.total || 0;
 
-    const totalPages = Math.ceil(totalSubServices / pageLimit);
+    const totalPages =
+      limit !== null
+        ? Math.ceil(totalSubServices / limit)
+        : totalSubServices > 0
+          ? 1
+          : 0;
+
+    // ============================================
+    // STEP 13: RESPONSE
+    // ============================================
 
     return res.status(200).json({
       success: true,
       message: "Sub-services fetched successfully.",
-      pagination: {
-        totalSubServices,
-        currentPage,
-        pageLimit,
-        totalPages,
-        hasNextPage: currentPage < totalPages,
-        hasPreviousPage: currentPage > 1,
+
+      data: {
+        sub_services: subServices,
+
+        pagination: {
+          current_page: page,
+          limit,
+          total_pages: totalPages,
+          total_sub_services: totalSubServices,
+
+          has_next_page: limit !== null && page < totalPages,
+
+          has_previous_page: limit !== null && page > 1,
+        },
       },
-      data: subServices,
     });
   } catch (error) {
     console.error("Get All SubServices Error:", error);

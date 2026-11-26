@@ -78,9 +78,9 @@ const bookingOfferSchema = new mongoose.Schema(
       default: null,
     },
 
-    // -------------------------------------
+    // ------------------
     // D. OFFER STATUS
-    // -------------------------------------
+    // ------------------
 
     offer_status: {
       type: String,
