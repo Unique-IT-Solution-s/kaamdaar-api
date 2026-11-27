@@ -21,13 +21,20 @@ const subServiceImageSchema = new mongoose.Schema(
 
 const subServicePricingSchema = new mongoose.Schema(
   {
+    pricing_type: {
+      type: String,
+      enum: ["PER_UNIT", "PER_HOUR", "PER_TASK"],
+      required: true,
+      default: "PER_TASK",
+    },
+
     base_price: {
       type: Number,
       min: 1,
       default: null,
       validate: {
         validator: (value) => value === null || Number.isSafeInteger(value),
-        message: "SubService price must be a valid integer in paise.",
+        message: "Price must be an integer in paise.",
       },
     },
 
@@ -35,6 +42,18 @@ const subServicePricingSchema = new mongoose.Schema(
       type: String,
       enum: ["INR"],
       default: "INR",
+    },
+
+    min_quantity: {
+      type: Number,
+      min: 1,
+      default: 1,
+    },
+
+    max_quantity: {
+      type: Number,
+      min: 1,
+      default: 1,
     },
   },
   { _id: false },

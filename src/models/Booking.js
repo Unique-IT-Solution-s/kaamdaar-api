@@ -103,9 +103,8 @@ const bookingAddressSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 /* =========================================
    2. BOOKING PRICING SNAPSHOT
@@ -167,9 +166,8 @@ const bookingPricingSchema = new mongoose.Schema(
       },
     },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 /* =========================================
    3. PROVIDER ASSIGNMENT HISTORY
@@ -192,12 +190,7 @@ const assignmentHistorySchema = new mongoose.Schema(
 
     action: {
       type: String,
-      enum: [
-        "ASSIGNED",
-        "ACCEPTED",
-        "CANCELLED",
-        "REASSIGNED",
-      ],
+      enum: ["ASSIGNED", "ACCEPTED", "CANCELLED", "REASSIGNED"],
       required: true,
     },
 
@@ -213,9 +206,8 @@ const assignmentHistorySchema = new mongoose.Schema(
       default: Date.now,
     },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 /* =========================================
    4. BOOKING STATUS HISTORY
@@ -260,9 +252,8 @@ const bookingStatusHistorySchema = new mongoose.Schema(
       default: Date.now,
     },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 /* =========================================
    5. BOOKING CANCELLATION
@@ -311,9 +302,8 @@ const cancellationSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { _id: false }
+  { _id: false },
 );
-
 
 /* =========================================
    6. BOOKING MAIN SCHEMA
@@ -323,7 +313,6 @@ const bookingSchema = new mongoose.Schema(
   {
     // -------------------------------------
     // A. BOOKING IDENTIFICATION
-    // -------------------------------------
 
     booking_number: {
       type: String,
@@ -333,7 +322,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // B. CUSTOMER AND PROVIDER
-    // -------------------------------------
 
     customer_id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -349,7 +337,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // C. CATEGORY AND SERVICE
-    // -------------------------------------
 
     category_id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -360,6 +347,12 @@ const bookingSchema = new mongoose.Schema(
     service_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Service",
+      required: true,
+    },
+
+    sub_service_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SubService",
       required: true,
     },
 
@@ -383,14 +376,27 @@ const bookingSchema = new mongoose.Schema(
       },
     },
 
+    sub_service_snapshot: {
+      subservice_name: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+
+      estimated_duration_minutes: {
+        type: Number,
+        required: true,
+        min: 1,
+      },
+    },
+
     // -------------------------------------
     // D. SERVICE ADDRESS
-    // -------------------------------------
 
     address_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "CustomerAddress",
-      required: true,
+      default: null,
     },
 
     address_snapshot: {
@@ -400,7 +406,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // E. BOOKING SCHEDULE
-    // -------------------------------------
 
     booking_type: {
       type: String,
@@ -420,7 +425,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // F. BOOKING STATUS
-    // -------------------------------------
 
     booking_status: {
       type: String,
@@ -438,7 +442,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // G. PRICING SNAPSHOT
-    // -------------------------------------
 
     pricing: {
       type: bookingPricingSchema,
@@ -447,7 +450,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // H. PAYMENT TRACKING
-    // -------------------------------------
 
     payment_status: {
       type: String,
@@ -470,7 +472,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // I. BOOKING INSTRUCTIONS
-    // -------------------------------------
 
     special_instructions: {
       type: String,
@@ -481,7 +482,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // J. PROVIDER ASSIGNMENT HISTORY
-    // -------------------------------------
 
     assignment_history: {
       type: [assignmentHistorySchema],
@@ -490,7 +490,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // K. BOOKING STATUS HISTORY
-    // -------------------------------------
 
     status_history: {
       type: [bookingStatusHistorySchema],
@@ -499,7 +498,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // L. CANCELLATION DETAILS
-    // -------------------------------------
 
     cancellation: {
       type: cancellationSchema,
@@ -508,7 +506,6 @@ const bookingSchema = new mongoose.Schema(
 
     // -------------------------------------
     // M. IMPORTANT TIMESTAMPS
-    // -------------------------------------
 
     confirmed_at: {
       type: Date,
@@ -553,9 +550,8 @@ const bookingSchema = new mongoose.Schema(
       updatedAt: "updated_at",
     },
     collection: "bookings",
-  }
+  },
 );
-
 
 /* =========================================
    7. INDEXES
@@ -567,7 +563,7 @@ bookingSchema.index(
   {
     unique: true,
     name: "unique_booking_number",
-  }
+  },
 );
 
 // Customer booking history.
@@ -601,6 +597,12 @@ bookingSchema.index({
   scheduled_at: 1,
 });
 
+// SubService booking history
+bookingSchema.index({
+  sub_service_id: 1,
+  created_at: -1,
+});
+
 // Service analytics.
 bookingSchema.index({
   service_id: 1,
@@ -613,13 +615,11 @@ bookingSchema.index({
   created_at: -1,
 });
 
-
 /* =========================================
    8. EXPORT MODEL
 ========================================= */
 
 const Booking =
-  mongoose.models.Booking ||
-  mongoose.model("Booking", bookingSchema);
+  mongoose.models.Booking || mongoose.model("Booking", bookingSchema);
 
 export default Booking;

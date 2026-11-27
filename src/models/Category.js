@@ -67,7 +67,7 @@ const categorySchema = new mongoose.Schema(
     icon: {
       type: String,
       trim: true,
-      maxlength: 100,
+      maxlength: 200,
       default: null,
     },
 

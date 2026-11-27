@@ -188,7 +188,6 @@ export const getAllSubServices = async (req, res) => {
     // ============================================
 
     const userType = req.user?.user?.user_type ?? req.user?.user_type;
-
     const isCustomer = userType === "CUSTOMER";
 
     // ============================================
@@ -217,7 +216,7 @@ export const getAllSubServices = async (req, res) => {
       });
     }
 
-    if (req.query.page !== undefined && limit === null && page > 1) {
+    if (limit === null && page > 1) {
       return res.status(400).json({
         success: false,
         message: "limit is required when page is greater than 1.",
@@ -233,6 +232,7 @@ export const getAllSubServices = async (req, res) => {
     const {
       search,
       service_id,
+      category_id,
       is_active,
       sortBy = "sort_order",
       sortOrder = "asc",
@@ -255,7 +255,23 @@ export const getAllSubServices = async (req, res) => {
     }
 
     // ============================================
-    // STEP 5: ACTIVE STATUS FILTER
+    // STEP 5: VALIDATE CATEGORY ID
+    // ============================================
+
+    if (category_id !== undefined) {
+      if (
+        typeof category_id !== "string" ||
+        !mongoose.isValidObjectId(category_id)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid category_id.",
+        });
+      }
+    }
+
+    // ============================================
+    // STEP 6: ACTIVE STATUS FILTER
     // ============================================
 
     let activeFilter;
@@ -283,7 +299,7 @@ export const getAllSubServices = async (req, res) => {
     }
 
     // ============================================
-    // STEP 6: BUILD MONGODB FILTER
+    // STEP 7: BUILD SUB-SERVICE FILTER
     // ============================================
 
     const filter = {};
@@ -297,7 +313,7 @@ export const getAllSubServices = async (req, res) => {
     }
 
     // ============================================
-    // STEP 7: SEARCH FILTER
+    // STEP 8: SEARCH FILTER
     // ============================================
 
     if (search !== undefined && typeof search !== "string") {
@@ -329,75 +345,102 @@ export const getAllSubServices = async (req, res) => {
     }
 
     // ============================================
-    // STEP 8: CUSTOMER RESTRICTIONS
+    // STEP 9: CUSTOMER RESTRICTIONS
     // ============================================
 
     if (isCustomer) {
-      // Customer must provide service_id
-      if (!filter.service_id) {
+      // Customer must provide service_id or category_id
+      if (!service_id && !category_id) {
         return res.status(400).json({
           success: false,
-          message: "service_id is required.",
+          message: "service_id or category_id is required.",
         });
       }
 
-      // Check whether the requested Service is active
-      const activeService = await Service.findOne({
-        _id: filter.service_id,
-        is_active: true,
-      })
-        .select("_id category_id")
-        .lean();
-
-      if (!activeService) {
-        return res.status(200).json({
-          success: true,
-          message: "No active service or sub-services found.",
-          data: {
-            sub_services: [],
-            pagination: {
-              current_page: page,
-              limit,
-              total_pages: 0,
-              total_sub_services: 0,
-              has_next_page: false,
-              has_previous_page: false,
-            },
-          },
-        });
-      }
-
-      // Check whether the parent Category is active
-      const activeCategoryExists = await Category.exists({
-        _id: activeService.category_id,
-        is_active: true,
-      });
-
-      if (!activeCategoryExists) {
-        return res.status(200).json({
-          success: true,
-          message: "No active service or sub-services found.",
-          data: {
-            sub_services: [],
-            pagination: {
-              current_page: page,
-              limit,
-              total_pages: 0,
-              total_sub_services: 0,
-              has_next_page: false,
-              has_previous_page: false,
-            },
-          },
-        });
-      }
-
-      // Only active SubServices
-      filter.service_id = activeService._id;
+      // Customer can only see active SubServices
       filter.is_active = true;
+
+      // CASE 1: Customer sends service_id
+      if (service_id) {
+        const activeService = await Service.findOne({
+          _id: new mongoose.Types.ObjectId(service_id),
+          is_active: true,
+        })
+          .select("_id category_id")
+          .lean();
+
+        if (!activeService) {
+          return res.status(200).json({
+            success: true,
+            message: "No active service or sub-services found.",
+            data: {
+              sub_services: [],
+              pagination: {
+                current_page: page,
+                limit,
+                total_pages: 0,
+                total_sub_services: 0,
+                has_next_page: false,
+                has_previous_page: false,
+              },
+            },
+          });
+        }
+
+        // Check whether the Service's parent Category is active
+        const activeCategory = await Category.exists({
+          _id: activeService.category_id,
+          is_active: true,
+        });
+
+        if (!activeCategory) {
+          return res.status(200).json({
+            success: true,
+            message: "No active category or sub-services found.",
+            data: {
+              sub_services: [],
+              pagination: {
+                current_page: page,
+                limit,
+                total_pages: 0,
+                total_sub_services: 0,
+                has_next_page: false,
+                has_previous_page: false,
+              },
+            },
+          });
+        }
+      }
+
+      // CASE 2: Customer sends category_id
+      if (category_id) {
+        const activeCategory = await Category.exists({
+          _id: new mongoose.Types.ObjectId(category_id),
+          is_active: true,
+        });
+
+        if (!activeCategory) {
+          return res.status(200).json({
+            success: true,
+            message: "No active category or sub-services found.",
+            data: {
+              sub_services: [],
+              pagination: {
+                current_page: page,
+                limit,
+                total_pages: 0,
+                total_sub_services: 0,
+                has_next_page: false,
+                has_previous_page: false,
+              },
+            },
+          });
+        }
+      }
     }
 
     // ============================================
-    // STEP 9: SORT VALIDATION
+    // STEP 10: SORT VALIDATION
     // ============================================
 
     const allowedSortFields = [
@@ -430,25 +473,69 @@ export const getAllSubServices = async (req, res) => {
     };
 
     // ============================================
-    // STEP 10: BUILD PAGINATION PIPELINE
+    // STEP 11: PAGINATION PIPELINE
     // ============================================
 
     const paginationStages =
       limit !== null ? [{ $skip: skip }, { $limit: limit }] : [];
 
     // ============================================
-    // STEP 11: FETCH SUB-SERVICES
+    // STEP 12: BUILD SERVICE FILTER
+    // ============================================
+
+    const serviceMatch = {};
+
+    // Customers can only see active Services
+    if (isCustomer) {
+      serviceMatch["service.is_active"] = true;
+    }
+
+    // Filter Services by Category
+    if (category_id) {
+      serviceMatch["service.category_id"] = new mongoose.Types.ObjectId(
+        category_id,
+      );
+    }
+
+    // ============================================
+    // STEP 13: FETCH SUB-SERVICES
     // ============================================
 
     const result = await SubService.aggregate([
+      // STEP 1: Match SubServices
       {
         $match: filter,
       },
 
+      // STEP 2: Lookup parent Service
+      {
+        $lookup: {
+          from: Service.collection.name,
+          localField: "service_id",
+          foreignField: "_id",
+          as: "service",
+        },
+      },
+
+      // STEP 3: Unwind Service
+      {
+        $unwind: {
+          path: "$service",
+          preserveNullAndEmptyArrays: !isCustomer,
+        },
+      },
+
+      // STEP 4: Apply Service and Category filters
+      ...(Object.keys(serviceMatch).length > 0
+        ? [{ $match: serviceMatch }]
+        : []),
+
+      // STEP 5: Sort records
       {
         $sort: sort,
       },
 
+      // STEP 6: Calculate count and fetch data
       {
         $facet: {
           metadata: [
@@ -459,30 +546,6 @@ export const getAllSubServices = async (req, res) => {
 
           data: [
             ...paginationStages,
-
-            // ========================================
-            // LOOKUP SERVICE DETAILS
-            // ========================================
-
-            {
-              $lookup: {
-                from: Service.collection.name,
-                localField: "service_id",
-                foreignField: "_id",
-                as: "service",
-              },
-            },
-
-            {
-              $unwind: {
-                path: "$service",
-                preserveNullAndEmptyArrays: true,
-              },
-            },
-
-            // ========================================
-            // PROJECT REQUIRED FIELDS
-            // ========================================
 
             {
               $project: {
@@ -506,6 +569,7 @@ export const getAllSubServices = async (req, res) => {
                   _id: "$service._id",
                   service_name: "$service.service_name",
                   slug: "$service.slug",
+                  category_id: "$service.category_id",
                 },
               },
             },
@@ -515,7 +579,7 @@ export const getAllSubServices = async (req, res) => {
     ]);
 
     // ============================================
-    // STEP 12: PAGINATION DETAILS
+    // STEP 14: PAGINATION DETAILS
     // ============================================
 
     const subServices = result[0]?.data || [];
@@ -530,7 +594,7 @@ export const getAllSubServices = async (req, res) => {
           : 0;
 
     // ============================================
-    // STEP 13: RESPONSE
+    // STEP 15: RESPONSE
     // ============================================
 
     return res.status(200).json({
@@ -545,9 +609,7 @@ export const getAllSubServices = async (req, res) => {
           limit,
           total_pages: totalPages,
           total_sub_services: totalSubServices,
-
           has_next_page: limit !== null && page < totalPages,
-
           has_previous_page: limit !== null && page > 1,
         },
       },
