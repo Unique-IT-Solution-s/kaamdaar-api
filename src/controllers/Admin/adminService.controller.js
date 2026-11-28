@@ -2205,7 +2205,7 @@ export const importServices = async (req, res) => {
       });
     }
 
-    if (rows.length > 500) {
+    if (rows.length > 1000) {
       return res.status(400).json({
         success: false,
         message: "Maximum 500 rows are allowed per import.",

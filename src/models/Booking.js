@@ -134,6 +134,7 @@ const bookingPricingSchema = new mongoose.Schema(
       required: true,
       min: 0,
       max: 100,
+      default: 10,
     },
 
     commission_amount: {
@@ -164,6 +165,30 @@ const bookingPricingSchema = new mongoose.Schema(
         validator: Number.isSafeInteger,
         message: "Total amount must be an integer in paise.",
       },
+    },
+
+    pricing_type: {
+      type: String,
+      enum: ["PER_UNIT", "PER_HOUR", "PER_TASK"],
+      required: true,
+    },
+
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+
+    unit_price: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+
+    subtotal: {
+      type: Number,
+      required: true,
+      min: 1,
     },
   },
   { _id: false },
@@ -415,7 +440,7 @@ const bookingSchema = new mongoose.Schema(
 
     scheduled_at: {
       type: Date,
-      required: true,
+      default: null,
     },
 
     timezone: {

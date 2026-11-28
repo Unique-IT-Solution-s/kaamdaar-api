@@ -4,6 +4,7 @@ import { getCustomerProfile, logoutCustomer, updateCustomerProfile } from "../co
 import { deleteCustomerAvatar, getCustomerAvatar, updateCustomerAvatar } from "../controllers/customerAvatarController.js";
 import { handleAvatarUpload } from "../middleware/handleAvatarUpload.js";
 import { authenticateUser } from "../middleware/authmiddleware.js";
+import { previewBooking } from "../controllers/bookingController.js";
 
 
 
@@ -18,5 +19,9 @@ router.post("/logoutCustomer", authenticateUser, logoutCustomer)
 router.get("/me/avatar", authenticateUser, getCustomerAvatar)
 router.patch("/updateAvatar", authenticateUser, handleAvatarUpload, updateCustomerAvatar)
 router.delete("/deleteAvatar", authenticateUser, deleteCustomerAvatar)
+
+
+
+router.post("/bookings/preview", authenticateUser, previewBooking);
 
 export default router;

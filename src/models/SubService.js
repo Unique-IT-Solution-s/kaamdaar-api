@@ -48,12 +48,20 @@ const subServicePricingSchema = new mongoose.Schema(
       type: Number,
       min: 1,
       default: 1,
+      validate: {
+        validator: Number.isInteger,
+        message: "Minimum quantity must be a whole number.",
+      },
     },
 
     max_quantity: {
       type: Number,
       min: 1,
       default: 1,
+      validate: {
+        validator: Number.isInteger,
+        message: "Maximum quantity must be a whole number.",
+      },
     },
   },
   { _id: false },
